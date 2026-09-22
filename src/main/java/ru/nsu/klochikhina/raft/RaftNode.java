@@ -1,14 +1,17 @@
-package ru.nsu.klochikhina.raft.model;
+package ru.nsu.klochikhina.raft;
 
 import jakarta.annotation.PostConstruct;
-import lombok.Getter;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import ru.nsu.klochikhina.raft.dto.NodeInfo;
+import ru.nsu.klochikhina.raft.dto.NodeInfoResponse;
+import ru.nsu.klochikhina.raft.model.NodeConfig;
+import ru.nsu.klochikhina.raft.model.NodeStatus;
+import ru.nsu.klochikhina.raft.property.ClusterProperties;
 
 @Component
-@Getter
+@Data
 @Slf4j
 @RequiredArgsConstructor
 public class RaftNode {
@@ -19,12 +22,15 @@ public class RaftNode {
     private Integer currentTerm;
     private Integer votedFor;
 
+    private final ClusterProperties properties;
+
     @PostConstruct
     public void init() {
         this.status = NodeStatus.FOLLOWER;
         this.currentTerm = 0;
         this.votedFor = null;
-        this.logInfo();
+        this.logNodeInfo();
+        this.logKnownNodes();
     }
 
     public void becomeCandidate() {
@@ -43,11 +49,15 @@ public class RaftNode {
         this.status = NodeStatus.LEADER;
     }
 
-    public void logInfo() {
+    private void logNodeInfo() {
         log.info("[Node {}]: port = {}, status = {}, currentTerm = {}", config.getNodeId(), config.getPort(), status, currentTerm);
     }
 
-    public NodeInfo nodeInfo() {
-        return new NodeInfo(config.getNodeId(), config.getPort(), status, currentTerm);
+    private void logKnownNodes() {
+        log.info("[Node {}]: known nodes = {}", config.getNodeId(), properties.getNodes());
+    }
+
+    public NodeInfoResponse nodeInfo() {
+        return new NodeInfoResponse(config.getNodeId(), config.getPort(), status, currentTerm);
     }
 }

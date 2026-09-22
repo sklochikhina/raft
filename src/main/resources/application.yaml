@@ -1,3 +1,20 @@
 spring:
   application:
     name: RAFT
+
+cluster:
+  nodes:
+    - id: 1
+      port: 8081
+      host: localhost
+    - id: 2
+      port: 8082
+      host: localhost
+    - id: 3
+      port: 8083
+      host: localhost
+  ping-interval: 2000
+
+client:
+  connect-timeout: 2000
+  read-timeout: 2000
