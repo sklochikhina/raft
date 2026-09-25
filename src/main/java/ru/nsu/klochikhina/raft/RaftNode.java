@@ -5,10 +5,12 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import ru.nsu.klochikhina.raft.dto.NodeInfoResponse;
 import ru.nsu.klochikhina.raft.model.NodeConfig;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.property.ClusterProperties;
+
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @Data
@@ -17,36 +19,56 @@ import ru.nsu.klochikhina.raft.property.ClusterProperties;
 public class RaftNode {
 
     private final NodeConfig config;
-
-    private NodeStatus status;
-    private Integer currentTerm;
-    private Integer votedFor;
-
     private final ClusterProperties properties;
+
+    private volatile NodeStatus status;
+    private final AtomicLong currentTerm = new AtomicLong(0L);
+    private volatile Integer votedFor;
+
+    private volatile long lastHeartbeat;
+    private volatile long electionTimeout;
+
+    private final long lowerLimit = 150L;
+    private final long upperLimit = 301L;
 
     @PostConstruct
     public void init() {
-        this.status = NodeStatus.FOLLOWER;
-        this.currentTerm = 0;
-        this.votedFor = null;
-        this.logNodeInfo();
-        this.logKnownNodes();
+        status = NodeStatus.FOLLOWER;
+        currentTerm.set(0L);
+        votedFor = null;
+        lastHeartbeat = System.currentTimeMillis();
+        electionTimeout = randomElectionTimeout();
+
+        logNodeInfo();
+        logKnownNodes();
     }
 
     public void becomeCandidate() {
-        this.status = NodeStatus.CANDIDATE;
-        this.currentTerm++;
-        this.votedFor = this.config.getNodeId();
+        status = NodeStatus.CANDIDATE;
+        long newTerm = currentTerm.incrementAndGet();
+        votedFor = config.getNodeId();
+        log.info("[Node {}]: Became CANDIDATE for newTerm {}", config.getNodeId(), newTerm);
     }
 
-    public void becomeFollower(int term, int votedFor) {
-        this.status = NodeStatus.FOLLOWER;
-        this.currentTerm = term;
-        this.votedFor = votedFor;
+    public void becomeFollower(long term) {
+        status = NodeStatus.FOLLOWER;
+        currentTerm.set(term);
+        votedFor = null;
+        log.info("[Node {}]: Became FOLLOWER for newTerm {}", config.getNodeId(), term);
     }
 
     public void becomeLeader() {
-        this.status = NodeStatus.LEADER;
+        status = NodeStatus.LEADER;
+        log.info("[Node {}]: Became LEADER for newTerm {}", config.getNodeId(), currentTerm.get());
+    }
+
+    private long randomElectionTimeout() {
+        return ThreadLocalRandom.current().nextLong(lowerLimit, upperLimit);
+    }
+
+    public void resetElectionTimer() {
+        lastHeartbeat = System.currentTimeMillis();
+        electionTimeout = randomElectionTimeout();
     }
 
     private void logNodeInfo() {
@@ -55,9 +77,5 @@ public class RaftNode {
 
     private void logKnownNodes() {
         log.info("[Node {}]: known nodes = {}", config.getNodeId(), properties.getNodes());
-    }
-
-    public NodeInfoResponse nodeInfo() {
-        return new NodeInfoResponse(config.getNodeId(), config.getPort(), status, currentTerm);
     }
 }
