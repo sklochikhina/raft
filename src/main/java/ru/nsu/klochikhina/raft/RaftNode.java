@@ -28,8 +28,8 @@ public class RaftNode {
     private volatile long lastHeartbeat;
     private volatile long electionTimeout;
 
-    private final long lowerLimit = 150L;
-    private final long upperLimit = 301L;
+    private final long lowerLimit = 250L;
+    private final long upperLimit = 451L;
 
     @PostConstruct
     public void init() {

@@ -10,5 +10,4 @@ import java.util.List;
 @Data
 public class ClusterProperties {
     private List<NodeInfo> nodes;
-    private int pingInterval;
 }
