@@ -4,7 +4,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ru.nsu.klochikhina.raft.RaftNode;
 import ru.nsu.klochikhina.raft.dto.*;
+import ru.nsu.klochikhina.raft.model.NodeInfo;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -12,14 +15,36 @@ public class RaftService {
 
     private final RaftNode raftNode;
 
-    public VoteResponse vote(RequestVote requestVote) {
+    public StatusResponse status() {
+        int nodeId = raftNode.getConfig().getNodeId();
+        List<NodeInfo> allNodes = raftNode.getClusterProperties().getNodes();
 
-        if (raftNode.getCurrentTerm().get() > requestVote.newTerm()) {
-            return new VoteResponse(false, raftNode.getCurrentTerm().get());
+        NodeInfo self = allNodes.stream()
+                .filter(n -> n.id() == nodeId)
+                .findFirst()
+                .orElse(new NodeInfo(nodeId, raftNode.getConfig().getPort(), "unknown"));
+
+        List<NodeInfo> peers = allNodes.stream()
+                .filter(n -> n.id() != nodeId)
+                .toList();
+
+        return new StatusResponse(
+                self,
+                raftNode.getStatus(),
+                raftNode.getCurrentTerm().get(),
+                peers
+        );
+    }
+
+    public VoteResponse vote(RequestVote requestVote) {
+        long currentTerm = raftNode.getCurrentTerm().get();
+
+        if (currentTerm > requestVote.term()) {
+            return new VoteResponse(false, currentTerm);
         }
 
-        if (requestVote.newTerm() > raftNode.getCurrentTerm().get()) {
-            raftNode.becomeFollower(requestVote.newTerm());
+        if (requestVote.term() > currentTerm) {
+            raftNode.becomeFollower(requestVote.term());
         }
 
         boolean canVoteForCandidate = raftNode.getVotedFor() == null
@@ -30,7 +55,6 @@ public class RaftService {
 
         if (canVoteForCandidate /*&& isLogUpToDate*/) {
             raftNode.setVotedFor(requestVote.candidateId());
-            raftNode.setStatus(NodeStatus.FOLLOWER);
             raftNode.resetElectionTimer();
             return new VoteResponse(true, raftNode.getCurrentTerm().get());
         }
@@ -41,16 +65,14 @@ public class RaftService {
     public AppendEntriesResponse heartbeat(AppendEntries appendEntries) {
         long currentTerm = raftNode.getCurrentTerm().get();
 
-        if (appendEntries.currentTerm() < currentTerm) {
+        if (appendEntries.term() < currentTerm) {
             return new AppendEntriesResponse(false, currentTerm);
         }
 
-        if (appendEntries.currentTerm() > currentTerm) {
-            raftNode.getCurrentTerm().set(appendEntries.currentTerm());
-            raftNode.setVotedFor(null);
+        if (appendEntries.term() > currentTerm || raftNode.getStatus() != NodeStatus.FOLLOWER) {
+            raftNode.becomeFollower(appendEntries.term());
         }
 
-        raftNode.setStatus(NodeStatus.FOLLOWER);
         raftNode.resetElectionTimer();
 
         return new AppendEntriesResponse(true, raftNode.getCurrentTerm().get());

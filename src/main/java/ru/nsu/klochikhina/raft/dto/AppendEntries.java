@@ -1,7 +1,7 @@
 package ru.nsu.klochikhina.raft.dto;
 
 public record AppendEntries(
-        long currentTerm,
+        long term,
         int leaderId
 ) {
 }

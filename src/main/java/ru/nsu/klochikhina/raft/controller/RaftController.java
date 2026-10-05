@@ -12,12 +12,17 @@ public class RaftController {
 
     private final RaftService raftService;
 
-    @PostMapping("/request-vote")
+    @GetMapping("/status")
+    private StatusResponse status() {
+        return raftService.status();
+    }
+
+    @PostMapping("/request_vote")
     public VoteResponse vote(@RequestBody RequestVote requestVote) {
         return raftService.vote(requestVote);
     }
 
-    @PostMapping("/append-entries")
+    @PostMapping("/append_entries")
     public AppendEntriesResponse heartbeat(@RequestBody AppendEntries appendEntries) {
         return raftService.heartbeat(appendEntries);
     }

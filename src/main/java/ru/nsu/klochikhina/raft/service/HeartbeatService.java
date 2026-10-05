@@ -9,19 +9,18 @@ import ru.nsu.klochikhina.raft.model.NodeStatus;
 
 @Service
 @RequiredArgsConstructor
-public class HeartbeatTimer {
+public class HeartbeatService {
 
     private final NetworkService networkService;
     private final RaftNode raftNode;
 
-    @Scheduled(fixedDelay = 20)
+    @Scheduled(fixedDelay = 50)
     public void start() {
         if (raftNode.getStatus() != NodeStatus.LEADER) {
             return;
         }
-
-        var appendEntries = new AppendEntries(raftNode.getCurrentTerm().get(), raftNode.getConfig().getNodeId());
-
-        networkService.sendAppendEntries(appendEntries);
+        networkService.sendAppendEntries(
+                new AppendEntries(raftNode.getCurrentTerm().get(), raftNode.getConfig().getNodeId())
+        );
     }
 }

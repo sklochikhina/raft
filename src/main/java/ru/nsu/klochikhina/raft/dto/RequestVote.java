@@ -1,7 +1,7 @@
 package ru.nsu.klochikhina.raft.dto;
 
 public record RequestVote(
-        long newTerm,
+        long term,
         int candidateId
 ) {
 }

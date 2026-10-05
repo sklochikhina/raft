@@ -6,15 +6,18 @@ cluster:
   nodes:
     - id: 1
       port: 8081
-      host: localhost
+      host: 192.168.0.13
     - id: 2
       port: 8082
-      host: localhost
+      host: 192.168.0.13
     - id: 3
       port: 8083
-      host: localhost
+      host: 192.168.0.13
   ping-interval: 2000
 
 client:
   connect-timeout: 2000
   read-timeout: 2000
+
+server:
+  address: 192.168.0.13
