@@ -2,21 +2,23 @@ spring:
   application:
     name: RAFT
 
+cluster-host: localhost
+
 cluster:
   nodes:
     - id: 1
       port: 8081
-      host: 192.168.0.13
+      host: ${cluster-host}
     - id: 2
       port: 8082
-      host: 192.168.0.13
+      host: ${cluster-host}
     - id: 3
       port: 8083
-      host: 192.168.0.13
+      host: ${cluster-host}
 
 client:
   connect-timeout: 200
   read-timeout: 200
 
 server:
-  address: 192.168.0.13
+  address: ${cluster-host}
