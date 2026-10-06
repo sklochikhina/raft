@@ -1,7 +1,7 @@
 package ru.nsu.klochikhina.raft.dto;
 
-public record VoteResponse(
+public record RequestVoteResponse(
         boolean voteGranted,
-        long currentTerm
+        long term
 ) {
 }

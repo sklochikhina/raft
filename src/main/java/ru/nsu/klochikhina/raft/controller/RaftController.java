@@ -18,7 +18,7 @@ public class RaftController {
     }
 
     @PostMapping("/request_vote")
-    public VoteResponse vote(@RequestBody RequestVote requestVote) {
+    public RequestVoteResponse vote(@RequestBody RequestVote requestVote) {
         return raftService.vote(requestVote);
     }
 

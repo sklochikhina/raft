@@ -36,11 +36,11 @@ public class RaftService {
         );
     }
 
-    public VoteResponse vote(RequestVote requestVote) {
+    public RequestVoteResponse vote(RequestVote requestVote) {
         long currentTerm = raftNode.getCurrentTerm().get();
 
         if (currentTerm > requestVote.term()) {
-            return new VoteResponse(false, currentTerm);
+            return new RequestVoteResponse(false, currentTerm);
         }
 
         if (requestVote.term() > currentTerm) {
@@ -56,10 +56,10 @@ public class RaftService {
         if (canVoteForCandidate /*&& isLogUpToDate*/) {
             raftNode.setVotedFor(requestVote.candidateId());
             raftNode.resetElectionTimer();
-            return new VoteResponse(true, raftNode.getCurrentTerm().get());
+            return new RequestVoteResponse(true, raftNode.getCurrentTerm().get());
         }
 
-        return new VoteResponse(false, raftNode.getCurrentTerm().get());
+        return new RequestVoteResponse(false, raftNode.getCurrentTerm().get());
     }
 
     public AppendEntriesResponse heartbeat(AppendEntries appendEntries) {

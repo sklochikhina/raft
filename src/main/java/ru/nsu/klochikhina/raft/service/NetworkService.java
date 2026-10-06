@@ -11,7 +11,7 @@ import ru.nsu.klochikhina.raft.RaftNode;
 import ru.nsu.klochikhina.raft.dto.AppendEntries;
 import ru.nsu.klochikhina.raft.dto.AppendEntriesResponse;
 import ru.nsu.klochikhina.raft.dto.RequestVote;
-import ru.nsu.klochikhina.raft.dto.VoteResponse;
+import ru.nsu.klochikhina.raft.dto.RequestVoteResponse;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.property.ClusterProperties;
 
@@ -51,18 +51,18 @@ public class NetworkService {
                             .onStatus(HttpStatusCode::isError, (_, _) -> {
                                 throw new RestClientException("Could not send a vote request to node: " + node.host() + ":" + node.port());
                             })
-                            .body(VoteResponse.class);
+                            .body(RequestVoteResponse.class);
                 } catch (Exception e) {
                     log.debug("[Raft] Failed to get vote from node {}: {}", node.id(), e.getMessage());
                     return null;
                 }
-            }).thenAccept(voteResponse -> {
-                if (voteResponse == null) return;
+            }).thenAccept(requestVoteResponse -> {
+                if (requestVoteResponse == null) return;
 
-                if (voteResponse.currentTerm() > raftNode.getCurrentTerm().get()) {
-                    raftNode.becomeFollower(voteResponse.currentTerm());
+                if (requestVoteResponse.term() > raftNode.getCurrentTerm().get()) {
+                    raftNode.becomeFollower(requestVoteResponse.term());
                     raftNode.resetElectionTimer();
-                } else if (voteResponse.voteGranted() && raftNode.getStatus() == NodeStatus.CANDIDATE && raftNode.getCurrentTerm().get() == electionTerm) {
+                } else if (requestVoteResponse.voteGranted() && raftNode.getStatus() == NodeStatus.CANDIDATE && raftNode.getCurrentTerm().get() == electionTerm) {
                     if (votedCount.incrementAndGet() > totalNodes / 2) {
                         raftNode.becomeLeader();
                     }
@@ -91,8 +91,8 @@ public class NetworkService {
                     return null;
                 }
             }).thenAccept(response -> {
-                if (response != null && response.currentTerm() > raftNode.getCurrentTerm().get()) {
-                    raftNode.becomeFollower(response.currentTerm());
+                if (response != null && response.term() > raftNode.getCurrentTerm().get()) {
+                    raftNode.becomeFollower(response.term());
                     raftNode.resetElectionTimer();
                 }
             });
