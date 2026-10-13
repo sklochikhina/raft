@@ -37,45 +37,49 @@ public class RaftService {
     }
 
     public RequestVoteResponse vote(RequestVote requestVote) {
-        long currentTerm = raftNode.getCurrentTerm().get();
+        synchronized (raftNode) {
+            long currentTerm = raftNode.getCurrentTerm().get();
 
-        if (currentTerm > requestVote.term()) {
-            return new RequestVoteResponse(false, currentTerm);
+            if (currentTerm > requestVote.term()) {
+                return new RequestVoteResponse(false, currentTerm);
+            }
+
+            if (requestVote.term() > currentTerm) {
+                raftNode.becomeFollower(requestVote.term());
+            }
+
+            boolean canVoteForCandidate = raftNode.getVotedFor() == null
+                    || raftNode.getVotedFor().equals(requestVote.candidateId());
+
+            // TODO: implement log up-to-date check
+            //boolean isLogUpToDate = isLogUpToDate(requestVote.lastLogTerm(), requestVote.lastLogIndex());
+
+            if (canVoteForCandidate /*&& isLogUpToDate*/) {
+                raftNode.setVotedFor(requestVote.candidateId());
+                raftNode.resetElectionTimer();
+                return new RequestVoteResponse(true, raftNode.getCurrentTerm().get());
+            }
+
+            return new RequestVoteResponse(false, raftNode.getCurrentTerm().get());
         }
-
-        if (requestVote.term() > currentTerm) {
-            raftNode.becomeFollower(requestVote.term());
-        }
-
-        boolean canVoteForCandidate = raftNode.getVotedFor() == null
-                || raftNode.getVotedFor().equals(requestVote.candidateId());
-
-        // TODO: implement log up-to-date check
-        //boolean isLogUpToDate = isLogUpToDate(requestVote.lastLogTerm(), requestVote.lastLogIndex());
-
-        if (canVoteForCandidate /*&& isLogUpToDate*/) {
-            raftNode.setVotedFor(requestVote.candidateId());
-            raftNode.resetElectionTimer();
-            return new RequestVoteResponse(true, raftNode.getCurrentTerm().get());
-        }
-
-        return new RequestVoteResponse(false, raftNode.getCurrentTerm().get());
     }
 
     public AppendEntriesResponse heartbeat(AppendEntries appendEntries) {
-        long currentTerm = raftNode.getCurrentTerm().get();
+        synchronized (raftNode) {
+            long currentTerm = raftNode.getCurrentTerm().get();
 
-        if (appendEntries.term() < currentTerm) {
-            return new AppendEntriesResponse(false, currentTerm);
+            if (appendEntries.term() < currentTerm) {
+                return new AppendEntriesResponse(false, currentTerm);
+            }
+
+            if (appendEntries.term() > currentTerm || raftNode.getStatus() != NodeStatus.FOLLOWER) {
+                raftNode.becomeFollower(appendEntries.term());
+            }
+
+            raftNode.resetElectionTimer();
+
+            return new AppendEntriesResponse(true, raftNode.getCurrentTerm().get());
         }
-
-        if (appendEntries.term() > currentTerm || raftNode.getStatus() != NodeStatus.FOLLOWER) {
-            raftNode.becomeFollower(appendEntries.term());
-        }
-
-        raftNode.resetElectionTimer();
-
-        return new AppendEntriesResponse(true, raftNode.getCurrentTerm().get());
     }
 
     /*private boolean isLogUpToDate(long candidateLastLogTerm, long candidateLastLogIndex) {

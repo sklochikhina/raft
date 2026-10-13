@@ -59,12 +59,14 @@ public class NetworkService {
             }).thenAccept(requestVoteResponse -> {
                 if (requestVoteResponse == null) return;
 
-                if (requestVoteResponse.term() > raftNode.getCurrentTerm().get()) {
-                    raftNode.becomeFollower(requestVoteResponse.term());
-                    raftNode.resetElectionTimer();
-                } else if (requestVoteResponse.voteGranted() && raftNode.getStatus() == NodeStatus.CANDIDATE && raftNode.getCurrentTerm().get() == electionTerm) {
-                    if (votedCount.incrementAndGet() > totalNodes / 2) {
-                        raftNode.becomeLeader();
+                synchronized (raftNode) {
+                    if (requestVoteResponse.term() > raftNode.getCurrentTerm().get()) {
+                        raftNode.becomeFollower(requestVoteResponse.term());
+                        raftNode.resetElectionTimer();
+                    } else if (requestVoteResponse.voteGranted() && raftNode.getStatus() == NodeStatus.CANDIDATE && raftNode.getCurrentTerm().get() == electionTerm) {
+                        if (votedCount.incrementAndGet() > totalNodes / 2) {
+                            raftNode.becomeLeader();
+                        }
                     }
                 }
             });
@@ -90,10 +92,14 @@ public class NetworkService {
                 } catch (Exception e) {
                     return null;
                 }
-            }).thenAccept(response -> {
-                if (response != null && response.term() > raftNode.getCurrentTerm().get()) {
-                    raftNode.becomeFollower(response.term());
-                    raftNode.resetElectionTimer();
+            }).thenAccept(appendEntriesResponse -> {
+                if (appendEntriesResponse != null) {
+                    synchronized (raftNode) {
+                        if (appendEntriesResponse.term() > raftNode.getCurrentTerm().get()) {
+                            raftNode.becomeFollower(appendEntriesResponse.term());
+                            raftNode.resetElectionTimer();
+                        }
+                    }
                 }
             });
         }
