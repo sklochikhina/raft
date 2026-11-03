@@ -16,22 +16,26 @@ public class ElectionService {
 
     @Scheduled(fixedDelay = 50)
     public void checkElectionTimeout() {
-        if (raftNode.getStatus() == NodeStatus.LEADER) {
-            return;
+        RequestVote request;
+        synchronized (raftNode) {
+            if (raftNode.getStatus() == NodeStatus.LEADER) {
+                return;
+            }
+            long elapsed = System.currentTimeMillis() - raftNode.getLastHeartbeat();
+            if (elapsed <= raftNode.getElectionTimeout()) {
+                return;
+            }
+
+            raftNode.becomeCandidate();
+            raftNode.resetElectionTimer();
+            int lastLogIndex = raftNode.getLastLogIndex();
+            request = new RequestVote(
+                    raftNode.getCurrentTerm().get(),
+                    raftNode.getConfig().getNodeId(),
+                    raftNode.getLogTerm(lastLogIndex),
+                    lastLogIndex
+            );
         }
-
-        long elapsed = System.currentTimeMillis() - raftNode.getLastHeartbeat();
-
-        if (elapsed > raftNode.getElectionTimeout()) {
-            startElection();
-        }
-    }
-
-    private void startElection() {
-        raftNode.becomeCandidate();
-        raftNode.resetElectionTimer();
-        networkService.sendRequestVote(
-                new RequestVote(raftNode.getCurrentTerm().get(), raftNode.getConfig().getNodeId())
-        );
+        networkService.sendRequestVote(request);
     }
 }
