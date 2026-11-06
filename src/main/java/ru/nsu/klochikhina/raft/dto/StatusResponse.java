@@ -12,7 +12,6 @@ public record StatusResponse(
         long currentTerm,
         List<NodeInfo> peers,
         List<LogEntry> entries,
-        int commitIndex,
-        int lastApplied
+        int commitIndex
 ) {
 }

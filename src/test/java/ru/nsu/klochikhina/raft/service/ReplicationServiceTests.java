@@ -10,6 +10,7 @@ import ru.nsu.klochikhina.raft.model.NodeConfig;
 import ru.nsu.klochikhina.raft.model.NodeInfo;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.property.ClusterProperties;
+import ru.nsu.klochikhina.raft.support.LogCapture;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,7 +19,6 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 import static ru.nsu.klochikhina.raft.support.RaftTestFixture.node;
-import static ru.nsu.klochikhina.raft.support.RaftTestFixture.application;
 
 class ReplicationServiceTests {
 
@@ -62,7 +62,7 @@ class ReplicationServiceTests {
         raftNode.setCommitIndex(2);
 
         networkService = new RecordingNetworkService(raftNode, cluster);
-        replicationService = new ReplicationService(raftNode, networkService, application(raftNode));
+        replicationService = new ReplicationService(raftNode, networkService);
     }
 
     @Test
@@ -149,10 +149,20 @@ class ReplicationServiceTests {
     }
 
     @Test
-    void successfulHeartbeatConfirmsThePreviousEntry() {
-        replicationService.replicateLog();
+    void successfulHeartbeatConfirmsThePreviousEntryAndLogsProgressOnlyOnce() {
+        try (LogCapture capture = new LogCapture(ReplicationService.class)) {
+            replicationService.replicateLog();
+            assertTrue(capture.messages().isEmpty());
 
-        networkService.responses.getFirst().complete(new AppendEntriesResponse(true, 3));
+            networkService.responses.getFirst().complete(new AppendEntriesResponse(true, 3));
+            replicationService.replicateLog();
+            networkService.responses.get(2).complete(new AppendEntriesResponse(true, 3));
+
+            assertEquals(List.of(
+                    "[Node 1]: Replication confirmed by follower 2: firstIndex=1, lastIndex=4, term=3",
+                    "[Node 1]: Committed log through index=4, term=3"
+            ), capture.messages());
+        }
 
         assertEquals(4, raftNode.getMatchIndex().get(2));
         assertEquals(5, raftNode.getNextIndex().get(2));
@@ -173,7 +183,7 @@ class ReplicationServiceTests {
                 new LogEntry(1, "A"), new LogEntry(1, "B"),
                 new LogEntry(1, "X"), new LogEntry(1, "Y")
         ));
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
 
         replicationService.replicateLog();
         completeFromFollower(0, followerService);
@@ -195,8 +205,6 @@ class ReplicationServiceTests {
         completeFromFollower(3, followerService);
 
         assertEquals(4, follower.getCommitIndex());
-        assertEquals(4, raftNode.getLastApplied());
-        assertEquals(4, follower.getLastApplied());
     }
 
     @Test
@@ -346,7 +354,6 @@ class ReplicationServiceTests {
 
         networkService.responses.get(2).complete(new AppendEntriesResponse(true, 4));
         assertEquals(5, raftNode.getCommitIndex());
-        assertEquals(5, raftNode.getLastApplied());
     }
 
     @Test
@@ -371,7 +378,6 @@ class ReplicationServiceTests {
         replicationService.replicateLog();
 
         assertEquals(4, raftNode.getCommitIndex());
-        assertEquals(4, raftNode.getLastApplied());
         assertTrue(networkService.requests.isEmpty());
     }
 
@@ -379,14 +385,14 @@ class ReplicationServiceTests {
     void restoresPreviouslyConfirmedFollowerAfterItLosesItsEntireLogWithoutNewElection() {
         RaftNode follower = node(2, 3);
         follower.getLogEntries().addAll(raftNode.getLogEntries());
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
         replicationService.replicateLog();
         completeFromFollower(0, followerService);
         assertEquals(4, raftNode.getMatchIndex().get(2));
         assertEquals(4, raftNode.getCommitIndex());
 
         RaftNode restartedFollower = node(2, 3);
-        RaftService restartedService = new RaftService(restartedFollower, mock(ReplicationService.class), application(restartedFollower));
+        RaftService restartedService = new RaftService(restartedFollower, mock(ReplicationService.class));
         replicationService.replicateLog();
         completeFromFollower(2, restartedService);
 
@@ -402,7 +408,6 @@ class ReplicationServiceTests {
 
         assertEquals(raftNode.getLogEntries(), restartedFollower.getLogEntries());
         assertEquals(4, restartedFollower.getCommitIndex());
-        assertEquals(4, restartedFollower.getLastApplied());
         assertEquals(4, raftNode.getMatchIndex().get(2));
         assertEquals(5, raftNode.getNextIndex().get(2));
         assertEquals(NodeStatus.LEADER, raftNode.getStatus());

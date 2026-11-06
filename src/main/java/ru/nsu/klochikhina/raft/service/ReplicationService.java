@@ -21,7 +21,6 @@ public class ReplicationService {
 
     private final RaftNode raftNode;
     private final NetworkService networkService;
-    private final ApplyService applyService;
 
     private final Map<Integer, AppendEntries> pendingRequests = new HashMap<>();
     private final Map<Integer, Long> recoveringFollowers = new HashMap<>();
@@ -165,7 +164,6 @@ public class ReplicationService {
                 break;
             }
         }
-        applyService.applyCommittedEntries();
     }
 
     private boolean isRecovering(int followerId) {

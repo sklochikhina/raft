@@ -20,7 +20,6 @@ public class RaftService {
 
     private final RaftNode raftNode;
     private final ReplicationService replicationService;
-    private final ApplyService applyService;
 
     public StatusResponse status() {
         synchronized (raftNode) {
@@ -42,8 +41,7 @@ public class RaftService {
                     raftNode.getCurrentTerm().get(),
                     peers,
                     List.copyOf(raftNode.getLogEntries()),
-                    raftNode.getCommitIndex(),
-                    raftNode.getLastApplied()
+                    raftNode.getCommitIndex()
             );
         }
     }
@@ -177,7 +175,6 @@ public class RaftService {
                 log.info("[Node {}]: Committed log through index={}, term={}",
                         raftNode.getConfig().getNodeId(), newCommitIndex, raftNode.getCurrentTerm().get());
             }
-            applyService.applyCommittedEntries();
 
             return new AppendEntriesResponse(true, raftNode.getCurrentTerm().get());
         }

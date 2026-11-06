@@ -4,8 +4,6 @@ import ru.nsu.klochikhina.raft.RaftNode;
 import ru.nsu.klochikhina.raft.model.NodeConfig;
 import ru.nsu.klochikhina.raft.model.NodeInfo;
 import ru.nsu.klochikhina.raft.property.ClusterProperties;
-import ru.nsu.klochikhina.raft.service.ApplyService;
-import ru.nsu.klochikhina.raft.statemachine.StringStateMachine;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,9 +43,5 @@ public final class RaftTestFixture {
     public static void electLeader(RaftNode node) {
         node.becomeCandidate();
         node.becomeLeader();
-    }
-
-    public static ApplyService application(RaftNode node) {
-        return new ApplyService(node, new StringStateMachine());
     }
 }

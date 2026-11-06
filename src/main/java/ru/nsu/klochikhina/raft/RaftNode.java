@@ -33,7 +33,6 @@ public class RaftNode {
 
     private List<LogEntry> logEntries;
     private int commitIndex;
-    private int lastApplied;
 
     private Map<Integer, Integer> nextIndex;
     private Map<Integer, Integer> matchIndex;
@@ -52,7 +51,6 @@ public class RaftNode {
 
         logEntries = new ArrayList<>();
         commitIndex = 0;
-        lastApplied = 0;
 
         int clusterSize = clusterProperties.getNodes().size();
         nextIndex = new HashMap<>(clusterSize);

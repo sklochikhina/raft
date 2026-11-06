@@ -21,7 +21,6 @@ class RaftNodeTests {
         assertNull(node.getVotedFor());
         assertTrue(node.getLogEntries().isEmpty());
         assertEquals(0, node.getCommitIndex());
-        assertEquals(0, node.getLastApplied());
         assertTrue(node.getElectionTimeout() >= 250 && node.getElectionTimeout() < 451);
     }
 

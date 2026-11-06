@@ -30,7 +30,7 @@ class RaftServiceAppendEntriesTests {
         node.getLogEntries().addAll(originalLog);
         node.setCommitIndex(2);
         node.setLastHeartbeat(100);
-        service = new RaftService(node, mock(ReplicationService.class), application(node));
+        service = new RaftService(node, mock(ReplicationService.class));
     }
 
     @Test
@@ -79,7 +79,6 @@ class RaftServiceAppendEntriesTests {
         assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(1, "B"),
                 new LogEntry(3, "C"), new LogEntry(3, "D")), node.getLogEntries());
         assertEquals(4, node.getCommitIndex());
-        assertEquals(4, node.getLastApplied());
     }
 
     @Test
@@ -142,7 +141,11 @@ class RaftServiceAppendEntriesTests {
                     .toList();
             assertEquals(1, replicationMessages.size());
             assertTrue(replicationMessages.getFirst().contains("firstIndex=3, lastIndex=4, count=2"));
-            assertEquals(4, node.getLastApplied());
+            List<String> commitMessages = capture.messages().stream()
+                    .filter(message -> message.contains("Committed log through index"))
+                    .toList();
+            assertEquals(List.of("[Node 1]: Committed log through index=4, term=3"), commitMessages);
+            assertEquals(4, node.getCommitIndex());
         }
     }
 

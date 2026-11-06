@@ -32,7 +32,7 @@ class RaftServiceTests {
     void setUp() {
         raftNode = node(3);
         replicationService = mock(ReplicationService.class);
-        service = new RaftService(raftNode, replicationService, application(raftNode));
+        service = new RaftService(raftNode, replicationService);
     }
 
     @Test
@@ -53,7 +53,6 @@ class RaftServiceTests {
         assertEquals(List.of(new LogEntry(1, "old"), new LogEntry(2, "first"), new LogEntry(2, "second")),
                 raftNode.getLogEntries());
         assertEquals(1, raftNode.getCommitIndex());
-        assertEquals(0, raftNode.getLastApplied());
         verify(replicationService).replicateLog();
     }
 
@@ -99,14 +98,12 @@ class RaftServiceTests {
         RaftNode singleNode = node(1);
         electLeader(singleNode);
         NetworkService network = mock(NetworkService.class);
-        ApplyService application = application(singleNode);
         RaftService singleNodeService = new RaftService(singleNode,
-                new ReplicationService(singleNode, network, application), application);
+                new ReplicationService(singleNode, network));
 
         assertEquals(new AddEntriesResponse(HttpStatus.OK, true),
                 singleNodeService.addEntries(new AddEntries(List.of("A", "B"))));
         assertEquals(2, singleNode.getCommitIndex());
-        assertEquals(2, singleNode.getLastApplied());
         verifyNoInteractions(network);
     }
 
@@ -156,7 +153,7 @@ class RaftServiceTests {
 
         assertEquals(new StatusResponse(new NodeInfo(1, 8081, "localhost"), NodeStatus.LEADER, 1,
                 List.of(new NodeInfo(2, 8082, "localhost"), new NodeInfo(3, 8083, "localhost")),
-                List.of(), 0, 0), service.status());
+                List.of(), 0), service.status());
     }
 
     @Test
@@ -170,11 +167,10 @@ class RaftServiceTests {
     void acceptedBatchReachesFollowerAndCommitBoundaryIsPropagatedAfterMajority() {
         electLeader(raftNode);
         NetworkService network = mock(NetworkService.class);
-        ApplyService application = application(raftNode);
-        ReplicationService replication = new ReplicationService(raftNode, network, application);
-        RaftService leaderService = new RaftService(raftNode, replication, application);
+        ReplicationService replication = new ReplicationService(raftNode, network);
+        RaftService leaderService = new RaftService(raftNode, replication);
         RaftNode follower = node(2, 3);
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
         NodeInfo peer = raftNode.getClusterProperties().getNodes().get(1);
         CompletableFuture<AppendEntriesResponse> appendResponse = new CompletableFuture<>();
         CompletableFuture<AppendEntriesResponse> heartbeatResponse = new CompletableFuture<>();
@@ -209,9 +205,8 @@ class RaftServiceTests {
         NetworkService network = mock(NetworkService.class);
         when(network.sendAppendEntries(any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new AppendEntriesResponse(false, 1)));
-        ApplyService application = application(raftNode);
         RaftService leaderService = new RaftService(raftNode,
-                new ReplicationService(raftNode, network, application), application);
+                new ReplicationService(raftNode, network));
 
         assertEquals(new AddEntriesResponse(HttpStatus.ACCEPTED, false),
                 leaderService.addEntries(new AddEntries(List.of("A"))));

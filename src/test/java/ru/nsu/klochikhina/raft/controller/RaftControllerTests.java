@@ -12,7 +12,6 @@ import ru.nsu.klochikhina.raft.RaftNode;
 import ru.nsu.klochikhina.raft.model.LogEntry;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.service.NetworkService;
-import ru.nsu.klochikhina.raft.service.ApplyService;
 import ru.nsu.klochikhina.raft.service.RaftService;
 import ru.nsu.klochikhina.raft.service.ReplicationService;
 
@@ -41,8 +40,7 @@ class RaftControllerTests {
         electLeader(node);
         network = mock(NetworkService.class);
         when(network.sendAppendEntries(any(), any())).thenAnswer(_ -> new CompletableFuture<>());
-        ApplyService application = application(node);
-        RaftService service = new RaftService(node, new ReplicationService(node, network, application), application);
+        RaftService service = new RaftService(node, new ReplicationService(node, network));
         mvc = MockMvcBuilders.standaloneSetup(new RaftController(service)).build();
     }
 
@@ -125,8 +123,7 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.currentTerm").value(1))
                 .andExpect(jsonPath("$.peers.length()").value(2))
                 .andExpect(jsonPath("$.entries").isEmpty())
-                .andExpect(jsonPath("$.commitIndex").value(0))
-                .andExpect(jsonPath("$.lastApplied").value(0));
+                .andExpect(jsonPath("$.commitIndex").value(0));
     }
 
     @Test
@@ -151,6 +148,5 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.term").value(2));
         assertEquals(List.of(new LogEntry(2, "A")), node.getLogEntries());
         assertEquals(1, node.getCommitIndex());
-        assertEquals(1, node.getLastApplied());
     }
 }
