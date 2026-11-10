@@ -1,6 +1,9 @@
 spring:
   application:
     name: RAFT
+  output:
+    ansi:
+      enabled: always
 
 cluster-host: localhost
 
