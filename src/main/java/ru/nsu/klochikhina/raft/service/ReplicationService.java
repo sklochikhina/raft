@@ -49,8 +49,6 @@ public class ReplicationService {
                     continue;
                 }
 
-                // Recovery sends the full log separately from the normal cursor.
-                // It does not rewind the historical matchIndex or normal cursor.
                 int nextIndex = isRecovering(follower.id())
                         ? 1 : raftNode.getNextIndex().get(follower.id());
                 int prevLogIndex = nextIndex - 1;
@@ -103,12 +101,12 @@ public class ReplicationService {
             }
 
             if (response.success()) {
-                int lastMatchedIndex = request.prevLogIndex() + request.entries().size();
+                int matchIndex = request.prevLogIndex() + request.entries().size();
                 int previousMatchIndex = raftNode.getMatchIndex().get(followerId);
-                int matchIndex = Math.max(previousMatchIndex, lastMatchedIndex);
+
                 raftNode.getMatchIndex().put(followerId, matchIndex);
-                raftNode.getNextIndex().put(followerId,
-                        Math.max(raftNode.getNextIndex().get(followerId), matchIndex + 1));
+                raftNode.getNextIndex().put(followerId, matchIndex + 1);
+
                 if (isRecovering(followerId)) {
                     recoveringFollowers.remove(followerId);
                     log.info("[Node {}]: Follower {} recovery completed: matchIndex={}, term={}",
@@ -118,6 +116,7 @@ public class ReplicationService {
                             raftNode.getConfig().getNodeId(), followerId, previousMatchIndex + 1, matchIndex, currentTerm);
                 }
                 advanceCommitIndex();
+
             } else {
                 int matchIndex = raftNode.getMatchIndex().get(followerId);
                 if (isRecovering(followerId)) {
@@ -146,7 +145,7 @@ public class ReplicationService {
 
         for (int index = raftNode.getLastLogIndex(); index > raftNode.getCommitIndex(); index--) {
             if (raftNode.getLogTerm(index) != currentTerm) {
-                continue;
+                break;
             }
 
             int replicatedCount = 1;
