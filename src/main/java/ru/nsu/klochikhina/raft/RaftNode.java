@@ -33,6 +33,7 @@ public class RaftNode {
 
     private List<LogEntry> logEntries;
     private int commitIndex;
+    private int lastApplied;
 
     private Map<Integer, Integer> nextIndex;
     private Map<Integer, Integer> matchIndex;
@@ -51,6 +52,7 @@ public class RaftNode {
 
         logEntries = new ArrayList<>();
         commitIndex = 0;
+        lastApplied = 0;
 
         int clusterSize = clusterProperties.getNodes().size();
         nextIndex = new HashMap<>(clusterSize);
@@ -67,7 +69,6 @@ public class RaftNode {
         status = NodeStatus.CANDIDATE;
         long newTerm = currentTerm.incrementAndGet();
         votedFor = config.getNodeId();
-        // Смена term завершает ожидание запросов, принятых в прошлом лидерстве.
         notifyAll();
         log.info("[Node {}]: Became CANDIDATE for term {}", config.getNodeId(), newTerm);
     }
@@ -83,7 +84,6 @@ public class RaftNode {
                 votedFor = null;
             }
             status = NodeStatus.FOLLOWER;
-            // Клиентские запросы больше не должны ждать подтверждений старого лидерства.
             notifyAll();
             log.info("[Node {}]: Became FOLLOWER for term {}", config.getNodeId(), term);
         }
@@ -123,6 +123,11 @@ public class RaftNode {
 
     public synchronized void setCommitIndex(int commitIndex) {
         this.commitIndex = commitIndex;
+        notifyAll();
+    }
+
+    public synchronized void setLastApplied(int lastApplied) {
+        this.lastApplied = lastApplied;
         notifyAll();
     }
 

@@ -18,6 +18,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
+import static ru.nsu.klochikhina.raft.support.RaftTestFixture.application;
 
 class RaftServiceVoteTests {
 
@@ -45,7 +46,7 @@ class RaftServiceVoteTests {
                 new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"), new LogEntry(3, 2, "C")
         ));
         raftNode.setLastHeartbeat(100);
-        raftService = new RaftService(raftNode, mock(ReplicationService.class));
+        raftService = new RaftService(raftNode, mock(ReplicationService.class), application(raftNode));
     }
 
     @ParameterizedTest

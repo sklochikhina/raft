@@ -13,6 +13,7 @@ import ru.nsu.klochikhina.raft.dto.AppendEntriesResponse;
 import ru.nsu.klochikhina.raft.model.LogEntry;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.service.NetworkService;
+import ru.nsu.klochikhina.raft.service.ApplyService;
 import ru.nsu.klochikhina.raft.service.RaftService;
 import ru.nsu.klochikhina.raft.service.ReplicationService;
 
@@ -41,7 +42,8 @@ class RaftControllerTests {
         electLeader(node);
         network = mock(NetworkService.class);
         when(network.sendAppendEntries(any(), any())).thenAnswer(_ -> new CompletableFuture<>());
-        RaftService service = new RaftService(node, new ReplicationService(node, network));
+        ApplyService application = application(node);
+        RaftService service = new RaftService(node, new ReplicationService(node, network, application), application);
         mvc = MockMvcBuilders.standaloneSetup(new RaftController(service)).build();
     }
 
@@ -53,7 +55,13 @@ class RaftControllerTests {
                         .content("{\"entries\":[\"first\",\"second\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("200 OK"))
-                .andExpect(jsonPath("$.committed").value(true));
+                .andExpect(jsonPath("$.committed").value(true))
+                .andExpect(jsonPath("$.applied").value(true))
+                .andExpect(jsonPath("$.results.length()").value(2))
+                .andExpect(jsonPath("$.results[0].index").value(1))
+                .andExpect(jsonPath("$.results[0].result").value("applied: first"))
+                .andExpect(jsonPath("$.results[1].index").value(2))
+                .andExpect(jsonPath("$.results[1].result").value("applied: second"));
 
         assertEquals(List.of(new LogEntry(1, 1, "first"), new LogEntry(2, 1, "second")), node.getLogEntries());
         verify(network, times(2)).sendAppendEntries(any(), any());
@@ -65,7 +73,9 @@ class RaftControllerTests {
         mvc.perform(post("/raft/add_entries").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"entries\":[\"A\"]}"))
                 .andExpect(status().isGatewayTimeout())
-                .andExpect(jsonPath("$.committed").value(false));
+                .andExpect(jsonPath("$.committed").value(false))
+                .andExpect(jsonPath("$.applied").value(false))
+                .andExpect(jsonPath("$.results").isEmpty());
         assertEquals(0, node.getCommitIndex());
         assertEquals(List.of(new LogEntry(1, 1, "A")), node.getLogEntries());
     }
@@ -121,7 +131,8 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.entries[0].term").value(1))
                 .andExpect(jsonPath("$.entries[1].index").value(2))
                 .andExpect(jsonPath("$.entries[1].command").value("B"))
-                .andExpect(jsonPath("$.commitIndex").value(1));
+                .andExpect(jsonPath("$.commitIndex").value(1))
+                .andExpect(jsonPath("$.lastApplied").value(0));
     }
 
     @Test
@@ -139,7 +150,8 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.currentTerm").value(1))
                 .andExpect(jsonPath("$.peers.length()").value(2))
                 .andExpect(jsonPath("$.entries").isEmpty())
-                .andExpect(jsonPath("$.commitIndex").value(0));
+                .andExpect(jsonPath("$.commitIndex").value(0))
+                .andExpect(jsonPath("$.lastApplied").value(0));
     }
 
     @Test
@@ -164,5 +176,6 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.term").value(2));
         assertEquals(List.of(new LogEntry(1, 2, "A")), node.getLogEntries());
         assertEquals(1, node.getCommitIndex());
+        assertEquals(1, node.getLastApplied());
     }
 }

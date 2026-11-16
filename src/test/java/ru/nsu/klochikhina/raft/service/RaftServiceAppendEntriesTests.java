@@ -30,7 +30,7 @@ class RaftServiceAppendEntriesTests {
         node.getLogEntries().addAll(originalLog);
         node.setCommitIndex(2);
         node.setLastHeartbeat(100);
-        service = new RaftService(node, mock(ReplicationService.class));
+        service = new RaftService(node, mock(ReplicationService.class), application(node));
     }
 
     @Test
@@ -79,6 +79,7 @@ class RaftServiceAppendEntriesTests {
         assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"),
                 new LogEntry(3, 3, "C"), new LogEntry(4, 3, "D")), node.getLogEntries());
         assertEquals(4, node.getCommitIndex());
+        assertEquals(4, node.getLastApplied());
     }
 
     @Test

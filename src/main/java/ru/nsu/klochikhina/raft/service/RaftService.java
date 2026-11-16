@@ -22,6 +22,7 @@ public class RaftService {
 
     private final RaftNode raftNode;
     private final ReplicationService replicationService;
+    private final ApplyService applyService;
 
     public StatusResponse status() {
         synchronized (raftNode) {
@@ -43,7 +44,8 @@ public class RaftService {
                     raftNode.getCurrentTerm().get(),
                     peers,
                     List.copyOf(raftNode.getLogEntries()),
-                    raftNode.getCommitIndex()
+                    raftNode.getCommitIndex(),
+                    raftNode.getLastApplied()
             );
         }
     }
@@ -51,7 +53,7 @@ public class RaftService {
     public AddEntriesResponse addEntries(AddEntries entries) {
         if (entries == null || entries.entries() == null || entries.entries().isEmpty()
                 || entries.entries().stream().anyMatch(Objects::isNull)) {
-            return new AddEntriesResponse(HttpStatus.BAD_REQUEST, false);
+            return new AddEntriesResponse(HttpStatus.BAD_REQUEST, false, false, List.of());
         }
 
         List<String> commands = List.copyOf(entries.entries());
@@ -60,7 +62,7 @@ public class RaftService {
         LogEntry lastEntry;
         synchronized (raftNode) {
             if (raftNode.getStatus() != NodeStatus.LEADER) {
-                return new AddEntriesResponse(HttpStatus.CONFLICT, false);
+                return new AddEntriesResponse(HttpStatus.CONFLICT, false, false, List.of());
             }
 
             requestTerm = raftNode.getCurrentTerm().get();
@@ -78,31 +80,35 @@ public class RaftService {
                 + TimeUnit.MILLISECONDS.toNanos(raftNode.getClusterProperties().getCommitTimeout());
 
         replicationService.replicateLog();
-        return awaitCommit(lastIndex, lastEntry, requestTerm, deadline);
+        int firstIndex = lastIndex - commands.size() + 1;
+        return awaitApplication(firstIndex, lastIndex, lastEntry, requestTerm, deadline);
     }
 
-    private AddEntriesResponse awaitCommit(int lastIndex, LogEntry lastEntry, long requestTerm, long deadline) {
+    private AddEntriesResponse awaitApplication(int firstIndex, int lastIndex, LogEntry lastEntry,
+                                                long requestTerm, long deadline) {
         synchronized (raftNode) {
             while (true) {
                 boolean sameEntry = raftNode.getLastLogIndex() >= lastIndex
                         && raftNode.getLogEntries().get(lastIndex - 1).equals(lastEntry);
-                if (sameEntry && raftNode.getCommitIndex() >= lastIndex) {
-                    return new AddEntriesResponse(HttpStatus.OK, true);
+                boolean committed = sameEntry && raftNode.getCommitIndex() >= lastIndex;
+                if (committed && raftNode.getLastApplied() >= lastIndex) {
+                    return new AddEntriesResponse(HttpStatus.OK, true, true,
+                            applyService.resultsFor(firstIndex, lastIndex));
                 }
                 if (!sameEntry || raftNode.getStatus() != NodeStatus.LEADER
                         || raftNode.getCurrentTerm().get() != requestTerm) {
-                    return new AddEntriesResponse(HttpStatus.CONFLICT, false);
+                    return new AddEntriesResponse(HttpStatus.CONFLICT, committed, false, List.of());
                 }
 
                 long remaining = deadline - System.nanoTime();
                 if (remaining <= 0) {
-                    return new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false);
+                    return new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, committed, false, List.of());
                 }
                 try {
                     TimeUnit.NANOSECONDS.timedWait(raftNode, remaining);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    return new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, false);
+                    return new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, committed, false, List.of());
                 }
             }
         }
@@ -165,9 +171,6 @@ public class RaftService {
                 return new AppendEntriesResponse(false, raftNode.getCurrentTerm().get(), Math.max(1, conflictIndex));
             }
 
-            // Поле index должно соответствовать позиции записи после prevLogIndex.
-            // Проверяем весь пакет до изменения журнала, чтобы ошибочный индекс
-            // в конце пакета не оставил частично добавленные записи.
             for (int offset = 0; offset < appendEntries.entries().size(); offset++) {
                 if (appendEntries.entries().get(offset).index() != prevLogIndex + offset + 1) {
                     return new AppendEntriesResponse(false, raftNode.getCurrentTerm().get());
@@ -213,6 +216,8 @@ public class RaftService {
                 log.info("[Node {}]: Committed log through index={}, term={}",
                         raftNode.getConfig().getNodeId(), newCommitIndex, raftNode.getCurrentTerm().get());
             }
+
+            applyService.applyCommittedEntries();
 
             return new AppendEntriesResponse(true, raftNode.getCurrentTerm().get());
         }

@@ -1,9 +1,14 @@
 package ru.nsu.klochikhina.raft.support;
 
 import ru.nsu.klochikhina.raft.RaftNode;
+import org.springframework.http.HttpStatus;
+import ru.nsu.klochikhina.raft.dto.AddEntriesResponse;
+import ru.nsu.klochikhina.raft.dto.CommandResult;
 import ru.nsu.klochikhina.raft.model.NodeConfig;
 import ru.nsu.klochikhina.raft.model.NodeInfo;
 import ru.nsu.klochikhina.raft.property.ClusterProperties;
+import ru.nsu.klochikhina.raft.service.ApplyService;
+import ru.nsu.klochikhina.raft.statemachine.StringStateMachine;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,5 +48,17 @@ public final class RaftTestFixture {
     public static void electLeader(RaftNode node) {
         node.becomeCandidate();
         node.becomeLeader();
+    }
+
+    public static ApplyService application(RaftNode node) {
+        return new ApplyService(node, new StringStateMachine());
+    }
+
+    public static AddEntriesResponse appliedResponse(int firstIndex, String... commands) {
+        List<CommandResult> results = new ArrayList<>();
+        for (int offset = 0; offset < commands.length; offset++) {
+            results.add(new CommandResult(firstIndex + offset, "applied: " + commands[offset]));
+        }
+        return new AddEntriesResponse(HttpStatus.OK, true, true, List.copyOf(results));
     }
 }

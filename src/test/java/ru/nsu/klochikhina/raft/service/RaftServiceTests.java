@@ -33,13 +33,15 @@ class RaftServiceTests {
     private RaftNode raftNode;
     private ReplicationService replicationService;
     private RaftService service;
+    private ApplyService applyService;
 
     @BeforeEach
     void setUp() {
         raftNode = node(3);
         raftNode.getClusterProperties().setCommitTimeout(100);
         replicationService = mock(ReplicationService.class);
-        service = new RaftService(raftNode, replicationService);
+        applyService = application(raftNode);
+        service = new RaftService(raftNode, replicationService, applyService);
     }
 
     @Test
@@ -52,12 +54,13 @@ class RaftServiceTests {
             assertFalse(Thread.holdsLock(raftNode));
             assertEquals(3, raftNode.getLastLogIndex());
             raftNode.setCommitIndex(3);
+            applyService.applyCommittedEntries();
             return null;
         }).when(replicationService).replicateLog();
 
         AddEntriesResponse response = service.addEntries(new AddEntries(List.of("first", "second")));
 
-        assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response);
+        assertEquals(appliedResponse(2, "first", "second"), response);
         assertEquals(List.of(new LogEntry(1, 1, "old"), new LogEntry(2, 2, "first"), new LogEntry(3, 2, "second")),
                 raftNode.getLogEntries());
         assertEquals(3, raftNode.getCommitIndex());
@@ -69,7 +72,7 @@ class RaftServiceTests {
     void nonLeaderRejectsWritesWithoutChangingLog(NodeStatus status) {
         raftNode.setStatus(status);
 
-        assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false),
+        assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false, false, List.of()),
                 service.addEntries(new AddEntries(List.of("command"))));
         assertTrue(raftNode.getLogEntries().isEmpty());
         verifyNoInteractions(replicationService);
@@ -81,7 +84,7 @@ class RaftServiceTests {
         electLeader(raftNode);
         raftNode.getLogEntries().add(new LogEntry(1, 1, "existing"));
 
-        assertEquals(new AddEntriesResponse(HttpStatus.BAD_REQUEST, false), service.addEntries(request));
+        assertEquals(new AddEntriesResponse(HttpStatus.BAD_REQUEST, false, false, List.of()), service.addEntries(request));
         assertEquals(List.of(new LogEntry(1, 1, "existing")), raftNode.getLogEntries());
         verifyNoInteractions(replicationService);
     }
@@ -97,10 +100,11 @@ class RaftServiceTests {
         List<String> commands = List.of("", "  spaced  ", "ключ=значение", "same", "same");
         doAnswer(_ -> {
             raftNode.setCommitIndex(raftNode.getLastLogIndex());
+            applyService.applyCommittedEntries();
             return null;
         }).when(replicationService).replicateLog();
 
-        assertEquals(new AddEntriesResponse(HttpStatus.OK, true), service.addEntries(new AddEntries(commands)));
+        assertEquals(appliedResponse(1, commands.toArray(String[]::new)), service.addEntries(new AddEntries(commands)));
 
         assertEquals(commands, service.status().entries().stream().map(LogEntry::command).toList());
     }
@@ -110,10 +114,11 @@ class RaftServiceTests {
         RaftNode singleNode = node(1);
         electLeader(singleNode);
         NetworkService network = mock(NetworkService.class);
+        ApplyService singleApplication = application(singleNode);
         RaftService singleNodeService = new RaftService(singleNode,
-                new ReplicationService(singleNode, network));
+                new ReplicationService(singleNode, network, singleApplication), singleApplication);
 
-        assertEquals(new AddEntriesResponse(HttpStatus.OK, true),
+        assertEquals(appliedResponse(1, "A", "B"),
                 singleNodeService.addEntries(new AddEntries(List.of("A", "B"))));
         assertEquals(2, singleNode.getCommitIndex());
         verifyNoInteractions(network);
@@ -130,7 +135,7 @@ class RaftServiceTests {
             return null;
         }).when(replicationService).replicateLog();
 
-        assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false),
+        assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false, false, List.of()),
                 service.addEntries(new AddEntries(List.of("original"))));
     }
 
@@ -165,7 +170,7 @@ class RaftServiceTests {
 
         assertEquals(new StatusResponse(new NodeInfo(1, 8081, "localhost"), NodeStatus.LEADER, 1,
                 List.of(new NodeInfo(2, 8082, "localhost"), new NodeInfo(3, 8083, "localhost")),
-                List.of(), 0), service.status());
+                List.of(), 0, 0), service.status());
     }
 
     @Test
@@ -180,10 +185,10 @@ class RaftServiceTests {
         electLeader(raftNode);
         raftNode.getClusterProperties().setCommitTimeout(5000);
         NetworkService network = mock(NetworkService.class);
-        ReplicationService replication = new ReplicationService(raftNode, network);
-        RaftService leaderService = new RaftService(raftNode, replication);
+        ReplicationService replication = new ReplicationService(raftNode, network, applyService);
+        RaftService leaderService = new RaftService(raftNode, replication, applyService);
         RaftNode follower = node(2, 3);
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
         NodeInfo peer = raftNode.getClusterProperties().getNodes().get(1);
         CompletableFuture<AppendEntriesResponse> appendResponse = new CompletableFuture<>();
         CompletableFuture<AppendEntriesResponse> heartbeatResponse = new CompletableFuture<>();
@@ -205,7 +210,7 @@ class RaftServiceTests {
             ArgumentCaptor<AppendEntries> requests = ArgumentCaptor.forClass(AppendEntries.class);
             verify(network).sendAppendEntries(eq(peer), requests.capture());
             appendResponse.complete(followerService.appendEntries(requests.getValue()));
-            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response.get(1, TimeUnit.SECONDS));
+            assertEquals(appliedResponse(1, "A", "B"), response.get(1, TimeUnit.SECONDS));
 
             assertEquals(2, leaderService.status().commitIndex());
             assertEquals(0, followerService.status().commitIndex());
@@ -228,9 +233,9 @@ class RaftServiceTests {
         when(network.sendAppendEntries(any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new AppendEntriesResponse(false, 1)));
         RaftService leaderService = new RaftService(raftNode,
-                new ReplicationService(raftNode, network));
+                new ReplicationService(raftNode, network, applyService), applyService);
 
-        assertEquals(new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false),
+        assertEquals(new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false, false, List.of()),
                 leaderService.addEntries(new AddEntries(List.of("A"))));
         StatusResponse snapshot = leaderService.status();
         assertEquals(List.of(new LogEntry(1, 1, "A")), snapshot.entries());
@@ -246,9 +251,11 @@ class RaftServiceTests {
             var response = executor.submit(() -> service.addEntries(new AddEntries(List.of("A", "B"))));
             assertTrue(sent.await(1, TimeUnit.SECONDS));
             raftNode.setCommitIndex(1);
+            applyService.applyCommittedEntries();
             assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
             raftNode.setCommitIndex(2);
-            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response.get(1, TimeUnit.SECONDS));
+            applyService.applyCommittedEntries();
+            assertEquals(appliedResponse(1, "A", "B"), response.get(1, TimeUnit.SECONDS));
         }
     }
 
@@ -262,7 +269,7 @@ class RaftServiceTests {
             assertTrue(sent.await(1, TimeUnit.SECONDS));
             assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
             raftNode.becomeFollower(2);
-            assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false), response.get(1, TimeUnit.SECONDS));
+            assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false, false, List.of()), response.get(1, TimeUnit.SECONDS));
         }
     }
 
@@ -278,13 +285,50 @@ class RaftServiceTests {
             var second = executor.submit(() -> service.addEntries(new AddEntries(List.of("B"))));
             assertTrue(sent.await(1, TimeUnit.SECONDS));
             raftNode.setCommitIndex(1);
-            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), first.get(1, TimeUnit.SECONDS));
+            applyService.applyCommittedEntries();
+            assertEquals(appliedResponse(1, "A"), first.get(1, TimeUnit.SECONDS));
             assertThrows(TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
             raftNode.setCommitIndex(2);
-            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), second.get(1, TimeUnit.SECONDS));
+            applyService.applyCommittedEntries();
+            assertEquals(appliedResponse(2, "B"), second.get(1, TimeUnit.SECONDS));
             assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B")),
                     raftNode.getLogEntries());
         }
+    }
+
+    @Test
+    void commitAloneDoesNotCompleteRequestUntilStateMachineReturnsResult() throws Exception {
+        electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
+        CountDownLatch sent = signalReplicationStart(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var response = executor.submit(() -> service.addEntries(new AddEntries(List.of("A"))));
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            raftNode.setCommitIndex(1);
+            assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
+            assertEquals(0, raftNode.getLastApplied());
+
+            applyService.applyCommittedEntries();
+            assertEquals(appliedResponse(1, "A"), response.get(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void applicationFailureDoesNotReturnSuccessForCommittedBatch() {
+        electLeader(raftNode);
+        NetworkService network = mock(NetworkService.class);
+        when(network.sendAppendEntries(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new AppendEntriesResponse(true, 1)));
+        ApplyService failingApplication = new ApplyService(raftNode, _ -> {
+            throw new IllegalStateException("state machine unavailable");
+        });
+        RaftService service = new RaftService(raftNode,
+                new ReplicationService(raftNode, network, failingApplication), failingApplication);
+
+        assertEquals(new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, true, false, List.of()),
+                service.addEntries(new AddEntries(List.of("A"))));
+        assertEquals(1, raftNode.getCommitIndex());
+        assertEquals(0, raftNode.getLastApplied());
     }
 
     @Test
@@ -303,7 +347,7 @@ class RaftServiceTests {
             client.interrupt();
             client.join(1000);
             assertFalse(client.isAlive());
-            assertEquals(new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, false), response.get());
+            assertEquals(new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, false, false, List.of()), response.get());
             assertTrue(interrupted.get());
         } finally {
             client.interrupt();

@@ -10,6 +10,6 @@ import java.util.List;
 @Data
 public class ClusterProperties {
     private List<NodeInfo> nodes;
-    // Максимальное ожидание фиксации клиентского пакета, в миллисекундах.
+    // Общий срок ожидания фиксации и применения клиентского пакета, в миллисекундах.
     private long commitTimeout = 5000;
 }

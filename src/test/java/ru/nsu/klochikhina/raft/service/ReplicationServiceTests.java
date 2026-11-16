@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 import static ru.nsu.klochikhina.raft.support.RaftTestFixture.node;
+import static ru.nsu.klochikhina.raft.support.RaftTestFixture.application;
 
 class ReplicationServiceTests {
 
@@ -62,7 +63,7 @@ class ReplicationServiceTests {
         raftNode.setCommitIndex(2);
 
         networkService = new RecordingNetworkService(raftNode, cluster);
-        replicationService = new ReplicationService(raftNode, networkService);
+        replicationService = new ReplicationService(raftNode, networkService, application(raftNode));
     }
 
     @Test
@@ -183,7 +184,7 @@ class ReplicationServiceTests {
                 new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"),
                 new LogEntry(3, 1, "X"), new LogEntry(4, 1, "Y")
         ));
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
 
         replicationService.replicateLog();
         completeFromFollower(0, followerService);
@@ -385,14 +386,14 @@ class ReplicationServiceTests {
     void restoresPreviouslyConfirmedFollowerAfterItLosesItsEntireLogWithoutNewElection() {
         RaftNode follower = node(2, 3);
         follower.getLogEntries().addAll(raftNode.getLogEntries());
-        RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
+        RaftService followerService = new RaftService(follower, mock(ReplicationService.class), application(follower));
         replicationService.replicateLog();
         completeFromFollower(0, followerService);
         assertEquals(4, raftNode.getMatchIndex().get(2));
         assertEquals(4, raftNode.getCommitIndex());
 
         RaftNode restartedFollower = node(2, 3);
-        RaftService restartedService = new RaftService(restartedFollower, mock(ReplicationService.class));
+        RaftService restartedService = new RaftService(restartedFollower, mock(ReplicationService.class), application(restartedFollower));
         replicationService.replicateLog();
         completeFromFollower(2, restartedService);
 
