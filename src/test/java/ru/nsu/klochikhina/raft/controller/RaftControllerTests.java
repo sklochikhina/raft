@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import ru.nsu.klochikhina.raft.RaftNode;
+import ru.nsu.klochikhina.raft.dto.AppendEntriesResponse;
 import ru.nsu.klochikhina.raft.model.LogEntry;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 import ru.nsu.klochikhina.raft.service.NetworkService;
@@ -45,15 +46,28 @@ class RaftControllerTests {
     }
 
     @Test
-    void addEntriesReturnsActualAcceptedHttpStatusAndStartsReplication() throws Exception {
+    void addEntriesReturnsOkAfterMajorityConfirmation() throws Exception {
+        when(network.sendAppendEntries(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(new AppendEntriesResponse(true, 1)));
         mvc.perform(post("/raft/add_entries").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"entries\":[\"first\",\"second\"]}"))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.status").value("202 ACCEPTED"))
-                .andExpect(jsonPath("$.committed").value(false));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("200 OK"))
+                .andExpect(jsonPath("$.committed").value(true));
 
         assertEquals(List.of(new LogEntry(1, "first"), new LogEntry(1, "second")), node.getLogEntries());
         verify(network, times(2)).sendAppendEntries(any(), any());
+    }
+
+    @Test
+    void missingMajorityReturnsGatewayTimeoutInsteadOfAccepted() throws Exception {
+        node.getClusterProperties().setCommitTimeout(50);
+        mvc.perform(post("/raft/add_entries").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"entries\":[\"A\"]}"))
+                .andExpect(status().isGatewayTimeout())
+                .andExpect(jsonPath("$.committed").value(false));
+        assertEquals(0, node.getCommitIndex());
+        assertEquals(List.of(new LogEntry(1, "A")), node.getLogEntries());
     }
 
     @Test

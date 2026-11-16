@@ -8,6 +8,7 @@ spring:
 cluster-host: localhost
 
 cluster:
+  commit-timeout: 5000
   nodes:
     - id: 1
       port: 8081

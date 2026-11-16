@@ -12,6 +12,7 @@ import ru.nsu.klochikhina.raft.model.NodeStatus;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -53,6 +54,7 @@ public class RaftService {
         }
 
         List<String> commands = List.copyOf(entries.entries());
+        long requestTerm;
         int lastIndex;
         LogEntry lastEntry;
         synchronized (raftNode) {
@@ -60,22 +62,45 @@ public class RaftService {
                 return new AddEntriesResponse(HttpStatus.CONFLICT, false);
             }
 
-            long term = raftNode.getCurrentTerm().get();
+            requestTerm = raftNode.getCurrentTerm().get();
             List<LogEntry> batch = commands.stream()
-                    .map(command -> new LogEntry(term, command))
+                    .map(command -> new LogEntry(requestTerm, command))
                     .toList();
             raftNode.getLogEntries().addAll(batch);
             lastIndex = raftNode.getLastLogIndex();
             lastEntry = batch.getLast();
         }
 
-        replicationService.replicateLog();
+        long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(raftNode.getClusterProperties().getCommitTimeout());
 
+        return awaitCommit(lastIndex, lastEntry, requestTerm, deadline);
+    }
+
+    private AddEntriesResponse awaitCommit(int lastIndex, LogEntry lastEntry, long requestTerm, long deadline) {
         synchronized (raftNode) {
-            boolean committed = raftNode.getCommitIndex() >= lastIndex
-                    && raftNode.getLastLogIndex() >= lastIndex
-                    && raftNode.getLogEntries().get(lastIndex - 1).equals(lastEntry);
-            return new AddEntriesResponse(committed ? HttpStatus.OK : HttpStatus.ACCEPTED, committed);
+            while (true) {
+                boolean sameEntry = raftNode.getLastLogIndex() >= lastIndex
+                        && raftNode.getLogEntries().get(lastIndex - 1).equals(lastEntry);
+                if (sameEntry && raftNode.getCommitIndex() >= lastIndex) {
+                    return new AddEntriesResponse(HttpStatus.OK, true);
+                }
+                if (!sameEntry || raftNode.getStatus() != NodeStatus.LEADER
+                        || raftNode.getCurrentTerm().get() != requestTerm) {
+                    return new AddEntriesResponse(HttpStatus.CONFLICT, false);
+                }
+
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false);
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(raftNode, remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, false);
+                }
+            }
         }
     }
 

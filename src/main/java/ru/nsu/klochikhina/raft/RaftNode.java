@@ -67,6 +67,8 @@ public class RaftNode {
         status = NodeStatus.CANDIDATE;
         long newTerm = currentTerm.incrementAndGet();
         votedFor = config.getNodeId();
+        // Смена term завершает ожидание запросов, принятых в прошлом лидерстве.
+        notifyAll();
         log.info("[Node {}]: Became CANDIDATE for term {}", config.getNodeId(), newTerm);
     }
 
@@ -81,6 +83,8 @@ public class RaftNode {
                 votedFor = null;
             }
             status = NodeStatus.FOLLOWER;
+            // Клиентские запросы больше не должны ждать подтверждений старого лидерства.
+            notifyAll();
             log.info("[Node {}]: Became FOLLOWER for term {}", config.getNodeId(), term);
         }
     }
@@ -115,6 +119,11 @@ public class RaftNode {
     public void resetElectionTimer() {
         lastHeartbeat = System.currentTimeMillis();
         electionTimeout = randomElectionTimeout();
+    }
+
+    public synchronized void setCommitIndex(int commitIndex) {
+        this.commitIndex = commitIndex;
+        notifyAll();
     }
 
     public synchronized int getLastLogIndex() {

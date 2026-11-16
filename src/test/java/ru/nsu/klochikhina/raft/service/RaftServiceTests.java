@@ -17,6 +17,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -31,6 +37,7 @@ class RaftServiceTests {
     @BeforeEach
     void setUp() {
         raftNode = node(3);
+        raftNode.getClusterProperties().setCommitTimeout(100);
         replicationService = mock(ReplicationService.class);
         service = new RaftService(raftNode, replicationService);
     }
@@ -44,15 +51,16 @@ class RaftServiceTests {
         doAnswer(_ -> {
             assertFalse(Thread.holdsLock(raftNode));
             assertEquals(3, raftNode.getLastLogIndex());
+            raftNode.setCommitIndex(3);
             return null;
         }).when(replicationService).replicateLog();
 
         AddEntriesResponse response = service.addEntries(new AddEntries(List.of("first", "second")));
 
-        assertEquals(new AddEntriesResponse(HttpStatus.ACCEPTED, false), response);
+        assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response);
         assertEquals(List.of(new LogEntry(1, "old"), new LogEntry(2, "first"), new LogEntry(2, "second")),
                 raftNode.getLogEntries());
-        assertEquals(1, raftNode.getCommitIndex());
+        assertEquals(3, raftNode.getCommitIndex());
         verify(replicationService).replicateLog();
     }
 
@@ -87,8 +95,12 @@ class RaftServiceTests {
     void commandsAreStoredVerbatim() {
         electLeader(raftNode);
         List<String> commands = List.of("", "  spaced  ", "ключ=значение", "same", "same");
+        doAnswer(_ -> {
+            raftNode.setCommitIndex(raftNode.getLastLogIndex());
+            return null;
+        }).when(replicationService).replicateLog();
 
-        service.addEntries(new AddEntries(commands));
+        assertEquals(new AddEntriesResponse(HttpStatus.OK, true), service.addEntries(new AddEntries(commands)));
 
         assertEquals(commands, service.status().entries().stream().map(LogEntry::command).toList());
     }
@@ -118,7 +130,7 @@ class RaftServiceTests {
             return null;
         }).when(replicationService).replicateLog();
 
-        assertEquals(new AddEntriesResponse(HttpStatus.ACCEPTED, false),
+        assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false),
                 service.addEntries(new AddEntries(List.of("original"))));
     }
 
@@ -164,8 +176,9 @@ class RaftServiceTests {
     }
 
     @Test
-    void acceptedBatchReachesFollowerAndCommitBoundaryIsPropagatedAfterMajority() {
+    void responseWaitsForMajorityAndCommitBoundaryIsPropagatedToFollower() throws Exception {
         electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
         NetworkService network = mock(NetworkService.class);
         ReplicationService replication = new ReplicationService(raftNode, network);
         RaftService leaderService = new RaftService(raftNode, replication);
@@ -174,29 +187,38 @@ class RaftServiceTests {
         NodeInfo peer = raftNode.getClusterProperties().getNodes().get(1);
         CompletableFuture<AppendEntriesResponse> appendResponse = new CompletableFuture<>();
         CompletableFuture<AppendEntriesResponse> heartbeatResponse = new CompletableFuture<>();
-        when(network.sendAppendEntries(eq(peer), any())).thenReturn(appendResponse).thenReturn(heartbeatResponse);
+        CountDownLatch sent = new CountDownLatch(1);
+        when(network.sendAppendEntries(eq(peer), any())).thenAnswer(_ -> {
+            sent.countDown();
+            return appendResponse;
+        }).thenReturn(heartbeatResponse);
         when(network.sendAppendEntries(eq(raftNode.getClusterProperties().getNodes().get(2)), any()))
                 .thenReturn(new CompletableFuture<>());
 
-        assertEquals(new AddEntriesResponse(HttpStatus.ACCEPTED, false),
-                leaderService.addEntries(new AddEntries(List.of("A", "B"))));
-        assertEquals(0, leaderService.status().commitIndex());
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var response = executor.submit(() -> leaderService.addEntries(new AddEntries(List.of("A", "B"))));
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
+            // Если ожидание удерживает монитор узла, этот запрос status не завершится.
+            assertEquals(0, executor.submit(leaderService::status).get(1, TimeUnit.SECONDS).commitIndex());
 
-        ArgumentCaptor<AppendEntries> requests = ArgumentCaptor.forClass(AppendEntries.class);
-        verify(network).sendAppendEntries(eq(peer), requests.capture());
-        appendResponse.complete(followerService.appendEntries(requests.getValue()));
+            ArgumentCaptor<AppendEntries> requests = ArgumentCaptor.forClass(AppendEntries.class);
+            verify(network).sendAppendEntries(eq(peer), requests.capture());
+            appendResponse.complete(followerService.appendEntries(requests.getValue()));
+            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response.get(1, TimeUnit.SECONDS));
 
-        assertEquals(2, leaderService.status().commitIndex());
-        assertEquals(0, followerService.status().commitIndex());
-        replication.replicateLog();
-        verify(network, times(2)).sendAppendEntries(eq(peer), requests.capture());
-        heartbeatResponse.complete(followerService.appendEntries(requests.getValue()));
+            assertEquals(2, leaderService.status().commitIndex());
+            assertEquals(0, followerService.status().commitIndex());
+            replication.replicateLog();
+            verify(network, times(2)).sendAppendEntries(eq(peer), requests.capture());
+            heartbeatResponse.complete(followerService.appendEntries(requests.getValue()));
 
-        StatusResponse leaderStatus = leaderService.status();
-        StatusResponse followerStatus = followerService.status();
-        assertEquals(leaderStatus.entries(), followerStatus.entries());
-        assertEquals(leaderStatus.commitIndex(), followerStatus.commitIndex());
-        assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(1, "B")), followerStatus.entries());
+            StatusResponse leaderStatus = leaderService.status();
+            StatusResponse followerStatus = followerService.status();
+            assertEquals(leaderStatus.entries(), followerStatus.entries());
+            assertEquals(leaderStatus.commitIndex(), followerStatus.commitIndex());
+            assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(1, "B")), followerStatus.entries());
+        }
     }
 
     @Test
@@ -208,10 +230,92 @@ class RaftServiceTests {
         RaftService leaderService = new RaftService(raftNode,
                 new ReplicationService(raftNode, network));
 
-        assertEquals(new AddEntriesResponse(HttpStatus.ACCEPTED, false),
+        assertEquals(new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false),
                 leaderService.addEntries(new AddEntries(List.of("A"))));
         StatusResponse snapshot = leaderService.status();
         assertEquals(List.of(new LogEntry(1, "A")), snapshot.entries());
         assertEquals(0, snapshot.commitIndex());
+    }
+
+    @Test
+    void waitsForEntireBatchEvenWhenAnEarlierIndexIsCommitted() throws Exception {
+        electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
+        CountDownLatch sent = signalReplicationStart(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var response = executor.submit(() -> service.addEntries(new AddEntries(List.of("A", "B"))));
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            raftNode.setCommitIndex(1);
+            assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
+            raftNode.setCommitIndex(2);
+            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response.get(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void leadershipLossWakesWaitingClientWithoutWaitingForTimeout() throws Exception {
+        electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
+        CountDownLatch sent = signalReplicationStart(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var response = executor.submit(() -> service.addEntries(new AddEntries(List.of("A"))));
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
+            raftNode.becomeFollower(2);
+            assertEquals(new AddEntriesResponse(HttpStatus.CONFLICT, false), response.get(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void eachConcurrentClientWaitsForItsOwnBatch() throws Exception {
+        electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
+        CountDownLatch sent = signalReplicationStart(2);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> service.addEntries(new AddEntries(List.of("A"))));
+            // Дожидаемся первого добавления, чтобы индексы A и B были определены.
+            verify(replicationService, timeout(1000)).replicateLog();
+            var second = executor.submit(() -> service.addEntries(new AddEntries(List.of("B"))));
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            raftNode.setCommitIndex(1);
+            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), first.get(1, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
+            raftNode.setCommitIndex(2);
+            assertEquals(new AddEntriesResponse(HttpStatus.OK, true), second.get(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void interruptedWaitReturnsUnavailableAndPreservesInterruptFlag() throws Exception {
+        electLeader(raftNode);
+        raftNode.getClusterProperties().setCommitTimeout(5000);
+        CountDownLatch sent = signalReplicationStart(1);
+        AtomicReference<AddEntriesResponse> response = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+        Thread client = Thread.ofPlatform().start(() -> {
+            response.set(service.addEntries(new AddEntries(List.of("A"))));
+            interrupted.set(Thread.currentThread().isInterrupted());
+        });
+        try {
+            assertTrue(sent.await(1, TimeUnit.SECONDS));
+            client.interrupt();
+            client.join(1000);
+            assertFalse(client.isAlive());
+            assertEquals(new AddEntriesResponse(HttpStatus.SERVICE_UNAVAILABLE, false), response.get());
+            assertTrue(interrupted.get());
+        } finally {
+            client.interrupt();
+            client.join(1000);
+        }
+    }
+
+    private CountDownLatch signalReplicationStart(int count) {
+        CountDownLatch sent = new CountDownLatch(count);
+        doAnswer(_ -> {
+            assertFalse(Thread.holdsLock(raftNode));
+            sent.countDown();
+            return null;
+        }).when(replicationService).replicateLog();
+        return sent;
     }
 }
