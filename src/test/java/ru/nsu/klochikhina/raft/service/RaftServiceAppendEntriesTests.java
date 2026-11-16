@@ -25,8 +25,8 @@ class RaftServiceAppendEntriesTests {
     void setUp() {
         node = node(3);
         node.getCurrentTerm().set(3);
-        originalLog = List.of(new LogEntry(1, "A"), new LogEntry(1, "B"),
-                new LogEntry(2, "X"), new LogEntry(2, "Y"));
+        originalLog = List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"),
+                new LogEntry(3, 2, "X"), new LogEntry(4, 2, "Y"));
         node.getLogEntries().addAll(originalLog);
         node.setCommitIndex(2);
         node.setLastHeartbeat(100);
@@ -36,7 +36,7 @@ class RaftServiceAppendEntriesTests {
     @Test
     void staleLeaderCannotChangeLogCommitIndexOrTimer() {
         assertEquals(new AppendEntriesResponse(false, 3),
-                service.appendEntries(new AppendEntries(2, 2, 2, 1, List.of(new LogEntry(2, "C")), 3)));
+                service.appendEntries(new AppendEntries(2, 2, 2, 1, List.of(new LogEntry(3, 2, "C")), 3)));
         assertEquals(originalLog, node.getLogEntries());
         assertEquals(2, node.getCommitIndex());
         assertEquals(100, node.getLastHeartbeat());
@@ -51,7 +51,7 @@ class RaftServiceAppendEntriesTests {
 
     @Test
     void mismatchingPreviousTermDoesNotTruncateLog() {
-        assertFalse(service.appendEntries(new AppendEntries(3, 2, 3, 1, List.of(new LogEntry(3, "D")), 0)).success());
+        assertFalse(service.appendEntries(new AppendEntries(3, 2, 3, 1, List.of(new LogEntry(4, 3, "D")), 0)).success());
         assertEquals(originalLog, node.getLogEntries());
     }
 
@@ -63,22 +63,32 @@ class RaftServiceAppendEntriesTests {
 
     @Test
     void appendsMissingEntriesWithoutChangingExistingPrefix() {
-        assertTrue(service.appendEntries(new AppendEntries(3, 2, 4, 2, List.of(new LogEntry(3, "E")), 2)).success());
+        assertTrue(service.appendEntries(new AppendEntries(3, 2, 4, 2, List.of(new LogEntry(5, 3, "E")), 2)).success());
         assertEquals(List.of(originalLog.get(0), originalLog.get(1), originalLog.get(2), originalLog.get(3),
-                new LogEntry(3, "E")), node.getLogEntries());
+                new LogEntry(5, 3, "E")), node.getLogEntries());
     }
 
     @Test
     void replacesConflictAndFollowingTailAndHandlesDuplicateRequest() {
         AppendEntries request = new AppendEntries(3, 2, 2, 1,
-                List.of(new LogEntry(3, "C"), new LogEntry(3, "D")), 4);
+                List.of(new LogEntry(3, 3, "C"), new LogEntry(4, 3, "D")), 4);
 
         assertTrue(service.appendEntries(request).success());
         assertTrue(service.appendEntries(request).success());
 
-        assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(1, "B"),
-                new LogEntry(3, "C"), new LogEntry(3, "D")), node.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"),
+                new LogEntry(3, 3, "C"), new LogEntry(4, 3, "D")), node.getLogEntries());
         assertEquals(4, node.getCommitIndex());
+    }
+
+    @Test
+    void rejectsWrongEntryIndexWithoutPartiallyChangingLog() {
+        AppendEntries request = new AppendEntries(3, 2, 2, 1,
+                List.of(new LogEntry(3, 3, "C"), new LogEntry(6, 3, "D")), 4);
+
+        assertFalse(service.appendEntries(request).success());
+        assertEquals(originalLog, node.getLogEntries());
+        assertEquals(2, node.getCommitIndex());
     }
 
     @Test
@@ -93,14 +103,14 @@ class RaftServiceAppendEntriesTests {
         node.setCommitIndex(4);
 
         assertTrue(service.appendEntries(new AppendEntries(3, 2, 0, 0,
-                List.of(new LogEntry(1, "A")), 1)).success());
+                List.of(new LogEntry(1, 1, "A")), 1)).success());
         assertEquals(originalLog, node.getLogEntries());
         assertEquals(4, node.getCommitIndex());
     }
 
     @Test
     void commitIndexIsLimitedToLastMatchedEntry() {
-        assertTrue(service.appendEntries(new AppendEntries(3, 2, 2, 1, List.of(new LogEntry(3, "C")), 100)).success());
+        assertTrue(service.appendEntries(new AppendEntries(3, 2, 2, 1, List.of(new LogEntry(3, 3, "C")), 100)).success());
         assertEquals(3, node.getLastLogIndex());
         assertEquals(3, node.getCommitIndex());
     }
@@ -130,7 +140,7 @@ class RaftServiceAppendEntriesTests {
     @Test
     void logsStoredReplicationOnceAndDoesNotLogDuplicatesOrHeartbeatsAsNewData() {
         AppendEntries request = new AppendEntries(3, 2, 2, 1,
-                List.of(new LogEntry(3, "C"), new LogEntry(3, "D")), 4);
+                List.of(new LogEntry(3, 3, "C"), new LogEntry(4, 3, "D")), 4);
         try (LogCapture capture = new LogCapture(RaftService.class)) {
             service.appendEntries(request);
             service.appendEntries(request);

@@ -55,7 +55,7 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.status").value("200 OK"))
                 .andExpect(jsonPath("$.committed").value(true));
 
-        assertEquals(List.of(new LogEntry(1, "first"), new LogEntry(1, "second")), node.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 1, "first"), new LogEntry(2, 1, "second")), node.getLogEntries());
         verify(network, times(2)).sendAppendEntries(any(), any());
     }
 
@@ -67,7 +67,7 @@ class RaftControllerTests {
                 .andExpect(status().isGatewayTimeout())
                 .andExpect(jsonPath("$.committed").value(false));
         assertEquals(0, node.getCommitIndex());
-        assertEquals(List.of(new LogEntry(1, "A")), node.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 1, "A")), node.getLogEntries());
     }
 
     @Test
@@ -107,7 +107,7 @@ class RaftControllerTests {
     @Test
     void statusIncludesLogAndCommittedBoundaryOnFollower() throws Exception {
         node.setStatus(NodeStatus.FOLLOWER);
-        node.getLogEntries().addAll(List.of(new LogEntry(1, "A"), new LogEntry(1, "B")));
+        node.getLogEntries().addAll(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B")));
         node.setCommitIndex(1);
 
         mvc.perform(get("/raft/status"))
@@ -117,7 +117,9 @@ class RaftControllerTests {
                 .andExpect(jsonPath("$.currentTerm").value(1))
                 .andExpect(jsonPath("$.peers.length()").value(2))
                 .andExpect(jsonPath("$.entries.length()").value(2))
+                .andExpect(jsonPath("$.entries[0].index").value(1))
                 .andExpect(jsonPath("$.entries[0].term").value(1))
+                .andExpect(jsonPath("$.entries[1].index").value(2))
                 .andExpect(jsonPath("$.entries[1].command").value("B"))
                 .andExpect(jsonPath("$.commitIndex").value(1));
     }
@@ -155,12 +157,12 @@ class RaftControllerTests {
         mvc.perform(post("/raft/append_entries").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"term":2,"leaderId":2,"prevLogIndex":0,"prevLogTerm":0,
-                                 "entries":[{"term":2,"command":"A"}],"leaderCommit":1}
+                                 "entries":[{"index":1,"term":2,"command":"A"}],"leaderCommit":1}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.term").value(2));
-        assertEquals(List.of(new LogEntry(2, "A")), node.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 2, "A")), node.getLogEntries());
         assertEquals(1, node.getCommitIndex());
     }
 }

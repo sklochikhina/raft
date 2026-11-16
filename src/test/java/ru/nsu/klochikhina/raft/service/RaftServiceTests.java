@@ -44,7 +44,7 @@ class RaftServiceTests {
 
     @Test
     void leaderAppendsWholeBatchWithItsCurrentTermAndStartsReplicationOutsideLock() {
-        raftNode.getLogEntries().add(new LogEntry(1, "old"));
+        raftNode.getLogEntries().add(new LogEntry(1, 1, "old"));
         raftNode.getCurrentTerm().set(1);
         raftNode.setCommitIndex(1);
         electLeader(raftNode);
@@ -58,7 +58,7 @@ class RaftServiceTests {
         AddEntriesResponse response = service.addEntries(new AddEntries(List.of("first", "second")));
 
         assertEquals(new AddEntriesResponse(HttpStatus.OK, true), response);
-        assertEquals(List.of(new LogEntry(1, "old"), new LogEntry(2, "first"), new LogEntry(2, "second")),
+        assertEquals(List.of(new LogEntry(1, 1, "old"), new LogEntry(2, 2, "first"), new LogEntry(3, 2, "second")),
                 raftNode.getLogEntries());
         assertEquals(3, raftNode.getCommitIndex());
         verify(replicationService).replicateLog();
@@ -79,10 +79,10 @@ class RaftServiceTests {
     @MethodSource("invalidBatches")
     void invalidBatchIsRejectedWithoutPartialAppend(AddEntries request) {
         electLeader(raftNode);
-        raftNode.getLogEntries().add(new LogEntry(1, "existing"));
+        raftNode.getLogEntries().add(new LogEntry(1, 1, "existing"));
 
         assertEquals(new AddEntriesResponse(HttpStatus.BAD_REQUEST, false), service.addEntries(request));
-        assertEquals(List.of(new LogEntry(1, "existing")), raftNode.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 1, "existing")), raftNode.getLogEntries());
         verifyNoInteractions(replicationService);
     }
 
@@ -125,7 +125,7 @@ class RaftServiceTests {
         doAnswer(_ -> {
             raftNode.becomeFollower(2);
             raftNode.getLogEntries().clear();
-            raftNode.getLogEntries().add(new LogEntry(2, "replacement"));
+            raftNode.getLogEntries().add(new LogEntry(1, 2, "replacement"));
             raftNode.setCommitIndex(1);
             return null;
         }).when(replicationService).replicateLog();
@@ -136,7 +136,7 @@ class RaftServiceTests {
 
     @Test
     void statusReturnsImmutableSnapshotWithCommitIndex() {
-        raftNode.getLogEntries().addAll(List.of(new LogEntry(1, "A"), new LogEntry(2, "B")));
+        raftNode.getLogEntries().addAll(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 2, "B")));
         raftNode.getCurrentTerm().set(2);
         raftNode.setCommitIndex(1);
 
@@ -145,11 +145,11 @@ class RaftServiceTests {
         raftNode.setCommitIndex(0);
         raftNode.becomeCandidate();
 
-        assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(2, "B")), snapshot.entries());
+        assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 2, "B")), snapshot.entries());
         assertEquals(1, snapshot.commitIndex());
         assertEquals(2, snapshot.currentTerm());
         assertEquals(NodeStatus.FOLLOWER, snapshot.status());
-        assertThrows(UnsupportedOperationException.class, () -> snapshot.entries().add(new LogEntry(3, "C")));
+        assertThrows(UnsupportedOperationException.class, () -> snapshot.entries().add(new LogEntry(3, 3, "C")));
     }
 
     @Test
@@ -217,7 +217,7 @@ class RaftServiceTests {
             StatusResponse followerStatus = followerService.status();
             assertEquals(leaderStatus.entries(), followerStatus.entries());
             assertEquals(leaderStatus.commitIndex(), followerStatus.commitIndex());
-            assertEquals(List.of(new LogEntry(1, "A"), new LogEntry(1, "B")), followerStatus.entries());
+            assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B")), followerStatus.entries());
         }
     }
 
@@ -233,7 +233,7 @@ class RaftServiceTests {
         assertEquals(new AddEntriesResponse(HttpStatus.GATEWAY_TIMEOUT, false),
                 leaderService.addEntries(new AddEntries(List.of("A"))));
         StatusResponse snapshot = leaderService.status();
-        assertEquals(List.of(new LogEntry(1, "A")), snapshot.entries());
+        assertEquals(List.of(new LogEntry(1, 1, "A")), snapshot.entries());
         assertEquals(0, snapshot.commitIndex());
     }
 
@@ -282,6 +282,8 @@ class RaftServiceTests {
             assertThrows(TimeoutException.class, () -> second.get(50, TimeUnit.MILLISECONDS));
             raftNode.setCommitIndex(2);
             assertEquals(new AddEntriesResponse(HttpStatus.OK, true), second.get(1, TimeUnit.SECONDS));
+            assertEquals(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B")),
+                    raftNode.getLogEntries());
         }
     }
 

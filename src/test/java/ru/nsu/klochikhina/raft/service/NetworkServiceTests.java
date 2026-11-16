@@ -37,7 +37,7 @@ class NetworkServiceTests {
 
     private void setUpCluster(int size) {
         node = node(size);
-        node.getLogEntries().addAll(List.of(new LogEntry(1, "A"), new LogEntry(2, "B")));
+        node.getLogEntries().addAll(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 2, "B")));
         node.getCurrentTerm().set(2);
         node.becomeCandidate();
         RestClient.Builder builder = RestClient.builder();
@@ -58,12 +58,12 @@ class NetworkServiceTests {
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(content().json("""
                         {"term":3,"leaderId":1,"prevLogIndex":1,"prevLogTerm":1,
-                         "entries":[{"term":2,"command":"B"}],"leaderCommit":1}
+                         "entries":[{"index":2,"term":2,"command":"B"}],"leaderCommit":1}
                         """))
                 .andRespond(withSuccess("{\"success\":true,\"term\":3}", MediaType.APPLICATION_JSON));
 
         AppendEntriesResponse response = service.sendAppendEntries(node.getClusterProperties().getNodes().get(1),
-                new AppendEntries(3, 1, 1, 1, List.of(new LogEntry(2, "B")), 1)).get(5, TimeUnit.SECONDS);
+                new AppendEntries(3, 1, 1, 1, List.of(new LogEntry(2, 2, "B")), 1)).get(5, TimeUnit.SECONDS);
 
         assertEquals(new AppendEntriesResponse(true, 3), response);
         assertEquals(NodeStatus.CANDIDATE, node.getStatus());

@@ -42,7 +42,7 @@ class RaftServiceVoteTests {
         raftNode.init();
         raftNode.getCurrentTerm().set(3);
         raftNode.getLogEntries().addAll(List.of(
-                new LogEntry(1, "A"), new LogEntry(1, "B"), new LogEntry(2, "C")
+                new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"), new LogEntry(3, 2, "C")
         ));
         raftNode.setLastHeartbeat(100);
         raftService = new RaftService(raftNode, mock(ReplicationService.class));

@@ -54,7 +54,7 @@ class ElectionServiceTests {
     @Test
     void expiredFollowerStartsElectionWithActualLogMetadataOutsideNodeLock() {
         node.getCurrentTerm().set(2);
-        node.getLogEntries().addAll(List.of(new LogEntry(1, "A"), new LogEntry(2, "B")));
+        node.getLogEntries().addAll(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 2, "B")));
         expireTimer();
         doAnswer(_ -> {
             assertFalse(Thread.holdsLock(node));

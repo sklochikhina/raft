@@ -10,6 +10,7 @@ import ru.nsu.klochikhina.raft.model.LogEntry;
 import ru.nsu.klochikhina.raft.model.NodeInfo;
 import ru.nsu.klochikhina.raft.model.NodeStatus;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -63,9 +64,11 @@ public class RaftService {
             }
 
             requestTerm = raftNode.getCurrentTerm().get();
-            List<LogEntry> batch = commands.stream()
-                    .map(command -> new LogEntry(requestTerm, command))
-                    .toList();
+            List<LogEntry> batch = new ArrayList<>(commands.size());
+            int index = raftNode.getLastLogIndex() + 1;
+            for (String command : commands) {
+                batch.add(new LogEntry(index++, requestTerm, command));
+            }
             raftNode.getLogEntries().addAll(batch);
             lastIndex = raftNode.getLastLogIndex();
             lastEntry = batch.getLast();
@@ -74,6 +77,7 @@ public class RaftService {
         long deadline = System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(raftNode.getClusterProperties().getCommitTimeout());
 
+        replicationService.replicateLog();
         return awaitCommit(lastIndex, lastEntry, requestTerm, deadline);
     }
 
@@ -159,6 +163,15 @@ public class RaftService {
                     conflictIndex--;
                 }
                 return new AppendEntriesResponse(false, raftNode.getCurrentTerm().get(), Math.max(1, conflictIndex));
+            }
+
+            // Поле index должно соответствовать позиции записи после prevLogIndex.
+            // Проверяем весь пакет до изменения журнала, чтобы ошибочный индекс
+            // в конце пакета не оставил частично добавленные записи.
+            for (int offset = 0; offset < appendEntries.entries().size(); offset++) {
+                if (appendEntries.entries().get(offset).index() != prevLogIndex + offset + 1) {
+                    return new AppendEntriesResponse(false, raftNode.getCurrentTerm().get());
+                }
             }
 
             List<LogEntry> localLog = raftNode.getLogEntries();

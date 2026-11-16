@@ -27,7 +27,7 @@ class RaftNodeTests {
     @Test
     void newElectionIncrementsTermAndVotesForSelfWithoutLosingLog() {
         RaftNode node = node(3);
-        node.getLogEntries().add(new LogEntry(1, "A"));
+        node.getLogEntries().add(new LogEntry(1, 1, "A"));
         node.getCurrentTerm().set(1);
         node.setCommitIndex(1);
 
@@ -36,7 +36,7 @@ class RaftNodeTests {
         assertEquals(NodeStatus.CANDIDATE, node.getStatus());
         assertEquals(2, node.getCurrentTerm().get());
         assertEquals(1, node.getVotedFor());
-        assertEquals(List.of(new LogEntry(1, "A")), node.getLogEntries());
+        assertEquals(List.of(new LogEntry(1, 1, "A")), node.getLogEntries());
         assertEquals(1, node.getCommitIndex());
     }
 
@@ -52,7 +52,7 @@ class RaftNodeTests {
     @Test
     void eachLeadershipInitializesFollowerProgressFromCurrentLog() {
         RaftNode node = node(3);
-        node.getLogEntries().addAll(List.of(new LogEntry(1, "A"), new LogEntry(1, "B")));
+        node.getLogEntries().addAll(List.of(new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B")));
         electLeader(node);
         assertEquals(Map.of(2, 3, 3, 3), node.getNextIndex());
         assertEquals(Map.of(2, 0, 3, 0), node.getMatchIndex());
@@ -60,7 +60,7 @@ class RaftNodeTests {
         node.getNextIndex().put(2, 1);
         node.getMatchIndex().put(2, 2);
         node.becomeFollower(2);
-        node.getLogEntries().add(new LogEntry(2, "C"));
+        node.getLogEntries().add(new LogEntry(3, 2, "C"));
         electLeader(node);
 
         assertEquals(Map.of(2, 4, 3, 4), node.getNextIndex());

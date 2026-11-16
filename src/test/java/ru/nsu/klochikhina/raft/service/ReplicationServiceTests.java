@@ -51,10 +51,10 @@ class ReplicationServiceTests {
         raftNode = new RaftNode(config, cluster);
         raftNode.init();
         raftNode.getLogEntries().addAll(List.of(
-                new LogEntry(1, "A"),
-                new LogEntry(1, "B"),
-                new LogEntry(2, "C"),
-                new LogEntry(3, "D")
+                new LogEntry(1, 1, "A"),
+                new LogEntry(2, 1, "B"),
+                new LogEntry(3, 2, "C"),
+                new LogEntry(4, 3, "D")
         ));
         raftNode.becomeCandidate();
         raftNode.getCurrentTerm().set(3);
@@ -75,11 +75,11 @@ class ReplicationServiceTests {
         assertEquals(List.of(
                 new SentRequest(firstFollower, new AppendEntries(
                         3, 1, 1, 1,
-                        List.of(new LogEntry(1, "B"), new LogEntry(2, "C"), new LogEntry(3, "D")),
+                        List.of(new LogEntry(2, 1, "B"), new LogEntry(3, 2, "C"), new LogEntry(4, 3, "D")),
                         2
                 )),
                 new SentRequest(secondFollower, new AppendEntries(
-                        3, 1, 3, 2, List.of(new LogEntry(3, "D")), 2
+                        3, 1, 3, 2, List.of(new LogEntry(4, 3, "D")), 2
                 ))
         ), networkService.requests);
     }
@@ -133,7 +133,7 @@ class ReplicationServiceTests {
     void successConfirmsOnlyEntriesFromTheSentRequest() {
         raftNode.getNextIndex().put(2, 2);
         replicationService.replicateLog();
-        raftNode.getLogEntries().add(new LogEntry(3, "E"));
+        raftNode.getLogEntries().add(new LogEntry(5, 3, "E"));
 
         networkService.responses.getFirst().complete(new AppendEntriesResponse(true, 3));
 
@@ -144,7 +144,7 @@ class ReplicationServiceTests {
 
         replicationService.replicateLog();
         assertEquals(new SentRequest(firstFollower,
-                new AppendEntries(3, 1, 4, 3, List.of(new LogEntry(3, "E")), 4)),
+                new AppendEntries(3, 1, 4, 3, List.of(new LogEntry(5, 3, "E")), 4)),
                 networkService.requests.get(2));
     }
 
@@ -180,8 +180,8 @@ class ReplicationServiceTests {
         RaftNode follower = new RaftNode(followerConfig, raftNode.getClusterProperties());
         follower.init();
         follower.getLogEntries().addAll(List.of(
-                new LogEntry(1, "A"), new LogEntry(1, "B"),
-                new LogEntry(1, "X"), new LogEntry(1, "Y")
+                new LogEntry(1, 1, "A"), new LogEntry(2, 1, "B"),
+                new LogEntry(3, 1, "X"), new LogEntry(4, 1, "Y")
         ));
         RaftService followerService = new RaftService(follower, mock(ReplicationService.class));
 
@@ -308,7 +308,7 @@ class ReplicationServiceTests {
     void eachIndexNeedsItsOwnMajorityInFiveNodeCluster() {
         setUpLeader(5);
         replicationService.replicateLog();
-        raftNode.getLogEntries().add(new LogEntry(3, "E"));
+        raftNode.getLogEntries().add(new LogEntry(5, 3, "E"));
 
         networkService.responses.get(0).complete(new AppendEntriesResponse(true, 3));
         assertEquals(2, raftNode.getCommitIndex());
@@ -348,7 +348,7 @@ class ReplicationServiceTests {
         assertEquals(4, raftNode.getMatchIndex().get(3));
         assertEquals(2, raftNode.getCommitIndex());
 
-        raftNode.getLogEntries().add(new LogEntry(4, "E"));
+        raftNode.getLogEntries().add(new LogEntry(5, 4, "E"));
         replicationService.replicateLog();
         assertEquals(2, raftNode.getCommitIndex());
 
@@ -518,7 +518,7 @@ class ReplicationServiceTests {
         assertEquals(6, networkService.requests.size());
 
         networkService.responses.get(4).complete(new AppendEntriesResponse(true, 4));
-        raftNode.getLogEntries().add(new LogEntry(4, "E"));
+        raftNode.getLogEntries().add(new LogEntry(5, 4, "E"));
         replicationService.replicateLog();
         networkService.responses.get(6).complete(new AppendEntriesResponse(true, 4));
         assertEquals(5, raftNode.getCommitIndex());
